@@ -18,23 +18,37 @@ use Terminus\Utils;
  *
  * @command sites
  */
-class MassContribUpdateCommand extends TerminusCommand {
+class MassWordPressUpdateCommand extends TerminusCommand {
   public $sites;
-
+  private $slack_settings;
+  private $args;
+  private $assoc_args;
+  
   /**
-   * Perform Drupal contrib mass updates on sites.
+   * Perform WordPress mass updates on sites.
    *
    * @param array $options Options to construct the command object
-   * @return MassContribUpdateCommand
+   * @return MasspluginsUpdateCommand
    */
   public function __construct(array $options = []) {
     $options['require_login'] = true;
     parent::__construct($options);
     $this->sites = new Sites();
+
+    $this->slack_settings = array(
+      'channel' => $this->get_env_var('MWU_SLACK_CHANNEL', '#dev-activity'),
+      'username' => $this->get_env_var('MWU_SLACK_USER_NAME', 'terminus'),
+      'icon_emoji' => $this->get_env_var('MWU_SLACK_ICON', ':neckbeard:'),
+      'url' => $this->get_env_var('MWU_SLACK_URL')
+    );
+  }
+
+  private function get_env_var($var, $default = '') {
+    return getenv($var) ? getenv($var) : $default;
   }
 
   /**
-   * Perform Drupal contrib mass updates on sites.
+   * Perform WordPress mass updates on sites.
    * Note: because of the size of this call, it is cached
    *   and also is the basis for loading individual sites by name
    *
@@ -44,7 +58,7 @@ class MassContribUpdateCommand extends TerminusCommand {
    * : Filter sites by environment.  Default is 'dev'.
    *
    * [--report]
-   * : Display the contrib modules or themes that need updated without actually performing the updates.
+   * : Display the plugins or themes that need updated without actually performing the updates.
    *
    * [--auto-commit]
    * : Commit changes with a generic message and switch back to git mode after performing the updates on each site.
@@ -55,11 +69,8 @@ class MassContribUpdateCommand extends TerminusCommand {
    * [--skip-backup]
    * : Skip backup before performing the updates on each site.
    *
-   * [--security-only]
-   * : Apply security updates only to contrib modules or themes.
-   *
-   * [--projects]
-   * : A comma separated list of specific contrib modules or themes to update.
+   * [--plugins]
+   * : A space separated list of specific wordpress plugins to update.
    *
    * [--team]
    * : Filter for sites you are a team member of.
@@ -76,14 +87,17 @@ class MassContribUpdateCommand extends TerminusCommand {
    * [--cached]
    * : Causes the command to return cached sites list instead of retrieving anew.
    *
-   * @subcommand mass-contrib-update
-   * @alias mcu
+   * @subcommand mass-plugins-update
+   * @alias mvu
    *
    * @param array $args Array of main arguments
    * @param array $assoc_args Array of associative arguments
    *
    */
-  public function massContribUpdate($args, $assoc_args) {
+  public function massWpUpdate($args, $assoc_args) {
+    $this->args = $args;
+    $this->assoc_args = $assoc_args;
+
     // Always fetch a fresh list of sites.
     if (!isset($assoc_args['cached'])) {
       $this->sites->rebuildCache();
@@ -144,6 +158,12 @@ class MassContribUpdateCommand extends TerminusCommand {
       $this->failure($message);
     }
 
+    $sites_count = count($sites);
+
+    if (!$this->isReport()) {
+      $this->send_to_slack("Updating {$sites_count} websites ...");
+    }
+
     // Loop through each site and update.
     foreach ($sites as $site) {
       $args = array(
@@ -152,6 +172,10 @@ class MassContribUpdateCommand extends TerminusCommand {
         'framework' => $site->attributes->framework,
       );
       $this->update($args, $assoc_args);
+    }
+
+    if (!$this->isReport()) {
+      $this->send_to_slack('Done updating plugins ...');
     }
   }
 
@@ -252,21 +276,20 @@ class MassContribUpdateCommand extends TerminusCommand {
     $environ = $args['env'];
     $framework = $args['framework'];
 
-    $report = isset($assoc_args['report']) ? true : false;
+    $report = $this->isReport();
     $confirm = isset($assoc_args['confirm']) ? true : false;
     $skip = isset($assoc_args['skip-backup']) ? true : false;
     $commit = isset($assoc_args['auto-commit']) ? true : false;
-    $security = isset($assoc_args['security-only']) ? '--security-only' : '';
-    $projects = isset($assoc_args['projects']) ? $assoc_args['projects'] : '';
-    $yn = $report ? '-n' : '-y';
+    $plugins = isset($assoc_args['plugins']) ? $assoc_args['plugins'] : '';
+    $all = $plugins ? '' : '--all';
+    $dry_run = $report ? '--dry-run' : '';
 
     // Check for valid frameworks.
     $valid_frameworks = array(
-      'drupal',
-      'drupal8',
+      'wordpress'
     );
     if (!in_array($framework, $valid_frameworks)) {
-      $this->log()->error('{framework} is not a valid framework.  Contrib updates aborted for {environ} environment of {name} site.', array(
+      $this->log()->error('{framework} is not a valid framework.  WordPress updates aborted for {environ} environment of {name} site.', array(
         'framework' => $framework,
         'environ' => $environ,
         'name' => $name,
@@ -300,7 +323,7 @@ class MassContribUpdateCommand extends TerminusCommand {
 
     // Prompt to confirm updates.
     if (!$report && $confirm) {
-      $message = 'Apply contrib updates to %s environment of %s site ';
+      $message = 'Apply plugins updates to %s environment of %s site ';
       $confirmed = $this->input()->confirm(
         array(
           'message' => $message,
@@ -318,7 +341,7 @@ class MassContribUpdateCommand extends TerminusCommand {
 
     if (!$report) {
       // Beginning message.
-      $this->log()->notice('Started contrib updates for {environ} environment of {name} site.', array(
+      $this->log()->notice('Started plugins updates for {environ} environment of {name} site.', array(
         'environ' => $environ,
         'name' => $name,
       ));
@@ -348,7 +371,7 @@ class MassContribUpdateCommand extends TerminusCommand {
           $this->workflowOutput($proceed);
         }
       } else {
-        $this->log()->error('Backup failed. Contrib updates aborted for {environ} environment of {name} site.', array(
+        $this->log()->error('Backup failed. Wordpress Plugins updates aborted for {environ} environment of {name} site.', array(
           'environ' => $environ,
           'name' => $name,
         ));
@@ -357,11 +380,11 @@ class MassContribUpdateCommand extends TerminusCommand {
     }
 
     if ($proceed) {
-      // Perform contrib updates via drush.
-      $drush_options = trim("pm-update $yn --no-core $security $projects");
-      exec("terminus --site=$name --env=$environ drush '$drush_options'", $update_array, $update_error);
+      // Perform wordpress updates via wp-cli.
+      $wp_options = trim("plugin update $plugins $all $dry_run");
+      exec("terminus --site=$name --env=$environ wp '$wp_options'", $update_array, $update_error);
       if ($update_error) {
-        $this->log()->error('Unable to perform contrib updates for {environ} environment of {name} site.', array(
+        $this->log()->error('Unable to perform plugins updates for {environ} environment of {name} site.', array(
           'environ' => $environ,
           'name' => $name,
         ));
@@ -383,7 +406,7 @@ class MassContribUpdateCommand extends TerminusCommand {
       $diff = (array)$env->diffstat();
       if (!empty($diff)) {
         // Auto-commit updates with a generic message.
-        if ($workflow = $env->commitChanges('Updates applied by Mass Contrib Update terminus plugin.')) {
+        if ($workflow = $env->commitChanges('Updates applied by Mass Wordpress Update terminus plugin.')) {
           if (is_string($workflow)) {
             $this->log()->info($workflow);
           } else {
@@ -410,10 +433,42 @@ class MassContribUpdateCommand extends TerminusCommand {
         $this->workflowOutput($workflow);
       }
       // Completion message.
-      $this->log()->notice('Finished contrib updates for {environ} environment of {name} site.', array(
+      $this->log()->notice('Finished plugins updates for {environ} environment of {name} site.', array(
         'environ' => $environ,
         'name' => $name,
       ));
     }
+  }
+
+  /**
+  * Send a notification to slack
+  */
+  private function send_to_slack($text) {
+    if (!$this->slack_settings['url']){
+      return;
+    }
+    $attachment['fallback'] = $text;
+    $post = array(
+      'username' => $this->slack_settings['username'],
+      'channel' => $this->slack_settings['channel'],
+      'icon_emoji' => $this->slack_settings['icon_emoji'],
+      'attachments' => array($attachment),
+      'text' => $text
+    );
+    $payload = json_encode($post);
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $this->slack_settings['url']);
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    $result = curl_exec($ch);
+    // $payload_pretty = json_encode($post,JSON_PRETTY_PRINT); // Uncomment to debug JSON
+    curl_close($ch);
+  }
+
+  private function isReport() {
+    return isset($this->assoc_args['report']) ? true : false;
   }
 }

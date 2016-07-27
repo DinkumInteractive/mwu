@@ -1,22 +1,22 @@
 # Mass Contrib Update
-Terminus plugin to perform Drupal contrib module or theme updates on Pantheon sites
+Terminus plugin to perform WordPress plugin or theme updates on Pantheon sites
 
 ## Installation:
 Refer to the [Terminus Wiki](https://github.com/pantheon-systems/terminus/wiki/Plugins).
 
 ## Usage:
 ```
-$ terminus sites mass-contrib-update
+$ terminus sites mass-wp-update
 ```
 
 ## Alias:
 ```
-$ terminus sites mcu
+$ terminus sites mwu
 ```
 
 ## Help:
 ```
-$ terminus help sites mcu
+$ terminus help sites mwu
 ```
 
 ## Options:
@@ -61,17 +61,17 @@ $ terminus help sites mcu
 ## Examples:
 Display contrib updates that would be applied to all dev environments without actually performing the updates:
 ```
-$ terminus sites mass-contrib-update --report
+$ terminus sites mass-wp-update --report
 ```
 Apply contrib updates, auto-commit with a generic message and change to git connection mode on all dev environments:
 ```
-$ terminus sites mcu --auto-commit
+$ terminus sites mwu --auto-commit
 ```
 Apply contrib security updates only and skip the automatic backup on all dev environments:
 ```
-$ terminus sites mcu --security-only --skip-backup
+$ terminus sites mwu --security-only --skip-backup
 ```
 Apply contrib updates to all live environments and prompt to continue prior to performing the updates on each site:
 ```
-$ terminus sites mcu --env=live --confirm
+$ terminus sites mwu --env=live --confirm
 ```

@@ -88,7 +88,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
    * : Causes the command to return cached sites list instead of retrieving anew.
    *
    * @subcommand mass-plugins-update
-   * @alias mvu
+   * @alias mwu
    *
    * @param array $args Array of main arguments
    * @param array $assoc_args Array of associative arguments

@@ -23,6 +23,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
   private $slack_settings;
   private $args;
   private $assoc_args;
+  private $yaml_settings;
   
   /**
    * Perform WordPress mass updates on sites.
@@ -102,11 +103,13 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     if (!isset($assoc_args['cached'])) {
       $this->sites->rebuildCache();
     }
+
     $sites = $this->sites->all();
 
     if (isset($assoc_args['team'])) {
       $sites = $this->filterByTeamMembership($sites);
     }
+
     if (isset($assoc_args['org'])) {
       $org_id = $this->input()->orgId(
         [
@@ -128,6 +131,10 @@ class MassWordPressUpdateCommand extends TerminusCommand {
         $owner_uuid = Session::getData()->user_uuid;
       }
       $sites = $this->filterByOwner($sites, $owner_uuid);
+    }
+
+    if (isset($assoc_args['yaml_settings'])) {
+      $this->yaml_settings = $this->parseYaml($assoc_args['yaml_settings']);
     }
 
     if (count($sites) == 0) {
@@ -164,14 +171,37 @@ class MassWordPressUpdateCommand extends TerminusCommand {
       $this->send_to_slack("Updating {$sites_count} websites ...");
     }
 
+    $excludedSites = array();
+
+    if ($yaml_settings) {
+
+      $excludedSites = $this->yamlGetExcludedSites($this->yaml_settings);
+
+    }
+
     // Loop through each site and update.
-    foreach ($sites as $site) {
-      $args = array(
-        'name'      => $site->get('name'),
-        'env'       => $env,
-        'framework' => $site->attributes->framework,
-      );
-      $this->update($args, $assoc_args);
+    foreach ( $sites as $site ) {
+
+      if ( ! in_array( $site->get('name'), $excludedSites ) ) {
+
+        $args = array(
+          'name'      => $site->get('name'),
+          'env'       => $env,
+          'framework' => $site->attributes->framework,
+        );
+
+        if ( $yaml_settings ) {
+
+          $site_args = $this->yamlGetSiteArgs( $site->get('name'), $this->yaml_settings );
+
+          $args = ( $site_args ? $site_args : $args );
+
+        }
+
+        $this->update( $args, $assoc_args );
+
+      }
+
     }
 
     if (!$this->isReport()) {
@@ -471,4 +501,100 @@ class MassWordPressUpdateCommand extends TerminusCommand {
   private function isReport() {
     return isset($this->assoc_args['report']) ? true : false;
   }
+
+  /**
+   * Get yaml file command configuration
+   */
+  public function getYaml( $args, $assoc_args ) {
+
+    if ( ! isset( $assoc_args['config'] ) ) {
+
+      $this->log()->info( 'Need config as param.' );
+
+      return false;
+
+    }
+
+    if ( ! file_exists( $assoc_args['config'] ) ) {
+
+      $this->log()->info( 'File ' . $assoc_args['config'] . ' does not exists.' );
+
+      return false;
+
+    }
+
+    $dir = $assoc_args['config'];
+
+    $config = $this->parseYaml( $dir );
+
+    $this->log()->info( $config );
+
+  }
+
+  private function parseYaml( $dir ){
+
+    if ( ! file_exists( $dir ) ) {
+
+      $this->log()->info( 'File ' . $dir . ' does not exists.' );
+
+      return false;
+
+    }
+
+    require_once 'lib/Spyc.php';
+
+    $yaml_settings = spyc_load_file( $dir );
+
+    $yaml_settings = $this->validate_yaml_settings( $yaml_settings );
+
+    return $yaml_settings;
+
+  }
+
+  private function yamlGetExcludedSites( $yaml ){
+
+    if ( ! isset( $yaml['sites']['exclude'] ) ) return false;
+
+    $sites = $yaml['sites']['exclude'];
+
+    $excludedSites = array();
+
+    foreach ($sites as $key => $value) {
+
+      $excludedSites[] = $value['name'];
+
+    }
+
+    return $excludedSites;
+
+  }
+
+  private function yamlGetSiteArgs( $name, $yaml ){
+
+    if ( ! isset( $yaml['sites']['update'] ) ) return false;
+
+    $args = false;
+
+    foreach ($yaml['sites']['update'] as $key => $value) {
+
+      if ( $value['name'] === $name ) {
+
+        $args = $value;
+
+      }
+
+    }
+
+    return $args;
+
+  }
+
+  private function validateYamlSettings( $settings ){
+
+    // we can add config validations here
+
+    return $settings;
+
+  }
+
 }

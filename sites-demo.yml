@@ -1,0 +1,15 @@
+sites:
+  settings: 
+      env: dev
+      report: true|false
+      upstream: true|false
+      auto-commit: true|false
+      skip-backup: true|false
+      auto-deploy: true|false
+  update:
+    - name: site1
+      auto-deploy: true|false
+    - name: site2
+      upstream: true|false
+    - name: site3
+    - name: site4

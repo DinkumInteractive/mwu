@@ -5,7 +5,7 @@ namespace Terminus\Commands;
 use Terminus\Commands\TerminusCommand;
 use Terminus\Commands\SiteCommand;
 use Terminus\Exceptions\TerminusException;
-use Terminus\Models\Collections\Sites;
+use Terminus\Collections\Sites;
 use Terminus\Models\Organization;
 use Terminus\Models\Site;
 use Terminus\Models\Upstreams;
@@ -93,9 +93,6 @@ class MassWordPressUpdateCommand extends TerminusCommand {
    * [--name=<regex>]
    * : Filter sites you can access via name.
    *
-   * [--cached]
-   * : Causes the command to return cached sites list instead of retrieving anew.
-   *
    * @subcommand mass-wordpress-update
    * @alias mwu
    *
@@ -108,11 +105,6 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     // Fetch arguments
     $this->args = $args;
     $this->assoc_args = $assoc_args;
-
-    // Always fetch a fresh list of sites.
-    if (!isset($this->assoc_args['cached'])) {
-      $this->sites->rebuildCache();
-    }
 
     // Get all sites
     $this->sites->fetch();
@@ -188,7 +180,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
       $args = array(
         'name'      => $site->get('name'),
         'env'       => $env,
-        'framework' => $site->attributes->framework,
+        'framework' => $site->get('framework'),
       );
 
       if ( $this->yaml_settings ) {
@@ -289,7 +281,8 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     $env  = $site->environments->get(
       $this->input()->env(array('args' => $assoc_args, 'site' => $site))
     );
-    $mode = $env->info('connection_mode');
+
+    $mode = $env->get('connection_mode');
 
     // Check for pending changes in sftp mode.
     if ($mode == 'sftp') {
@@ -323,7 +316,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
     if (!$report) {
       // Beginning message.
-      $this->log()->notice('==> Started plugins updates for {environ} environment of {name} site.\e[0m', array(
+      $this->log()->notice('==> Started plugins updates for {environ} environment of {name} site.', array(
         'environ' => $environ,
         'name' => $name,
       ));
@@ -788,7 +781,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
         $this->input()->env(array('args' => $args, 'site' => $site))
       );
 
-      $mode = $env->info('connection_mode');
+      $mode = $env->get('connection_mode');
 
       // Return if already in target connection mode
       if ( $mode === $siteCon ) return true;

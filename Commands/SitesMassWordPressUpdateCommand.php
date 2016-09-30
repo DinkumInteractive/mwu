@@ -5,7 +5,7 @@ namespace Terminus\Commands;
 use Terminus\Commands\TerminusCommand;
 use Terminus\Commands\SiteCommand;
 use Terminus\Exceptions\TerminusException;
-use Terminus\Models\Collections\Sites;
+use Terminus\Collections\Sites;
 use Terminus\Models\Organization;
 use Terminus\Models\Site;
 use Terminus\Models\Upstreams;
@@ -93,9 +93,6 @@ class MassWordPressUpdateCommand extends TerminusCommand {
    * [--name=<regex>]
    * : Filter sites you can access via name.
    *
-   * [--cached]
-   * : Causes the command to return cached sites list instead of retrieving anew.
-   *
    * @subcommand mass-wordpress-update
    * @alias mwu
    *
@@ -108,11 +105,6 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     // Fetch arguments
     $this->args = $args;
     $this->assoc_args = $assoc_args;
-
-    // Always fetch a fresh list of sites.
-    if (!isset($this->assoc_args['cached'])) {
-      $this->sites->rebuildCache();
-    }
 
     // Get all sites
     $this->sites->fetch();
@@ -188,7 +180,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
       $args = array(
         'name'      => $site->get('name'),
         'env'       => $env,
-        'framework' => $site->attributes->framework,
+        'framework' => $site->get('framework'),
       );
 
       if ( $this->yaml_settings ) {
@@ -202,7 +194,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
           $this->update( $args, $assoc_args );
 
         } else {
-
+          
           $this->log()->info('{name} excluded from updates', ['name' => $site->get('name')]);
 
         }
@@ -289,18 +281,30 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     $env  = $site->environments->get(
       $this->input()->env(array('args' => $assoc_args, 'site' => $site))
     );
-    $mode = $env->info('connection_mode');
+
+    $mode = $env->get('connection_mode');
 
     // Check for pending changes in sftp mode.
-    if ($mode == 'sftp') {
+    if ( $mode == 'sftp' ) {
+
       $diff = (array)$env->diffstat();
+
       if (!empty($diff)) {
+
         $this->log()->error('Unable to update {environ} environment of {name} site due to pending changes.  Commit changes and try again.', array(
           'environ' => $environ,
           'name' => $name,
         ));
+
         return false;
+
       }
+
+    } else {
+
+      // Set connection mode to sftp.
+      $mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+
     }
 
     // Prompt to confirm updates.
@@ -322,22 +326,13 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     }
 
     if (!$report) {
+      
       // Beginning message.
-      $this->log()->notice('==> Started plugins updates for {environ} environment of {name} site.\e[0m', array(
+      $this->log()->notice('==> Started plugins updates for {environ} environment of {name} site.', array(
         'environ' => $environ,
         'name' => $name,
       ));
-      // Set connection mode to sftp.
-      // if ($mode == 'git') {
-      //   $workflow = $env->changeConnectionMode('sftp');
-      //   if (is_string($workflow)) {
-      //     $this->log()->info($workflow);
-      //   } else {
-      //     $workflow->wait();
-      //     $this->workflowOutput($workflow);
-      //   }
-      //   $mode == 'sftp';
-      // }
+
     }
 
     $proceed = true;
@@ -367,14 +362,11 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     if ( $this->isUpstreamUpdate() || $this->yamlGetSiteSetting( $name, 'upstream' ) ) {
 
       // Set connection to git
-      $this->setSiteConnectionMode( $name, $environ, 'git' );
+      $mode = $this->setSiteConnectionMode( $name, $environ, 'git' );
 
       // Perform upstream update
       $upstreamUpdate = $this->upstream_update( $name, 'dev', true );
       $proceed = $upstreamUpdate['state'];
-
-      // Set connection back to sftp.
-      $this->setSiteConnectionMode( $name, $environ, 'sftp' );
 
     }
 
@@ -393,6 +385,13 @@ class MassWordPressUpdateCommand extends TerminusCommand {
         ),
       );
 
+      // Set connection back to sftp.
+      if ( $mode == 'git' ) {
+
+        $mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+
+      }
+
       $update_site = $this->execute( $tm_command, false, true, $update_site_err );
 
       $proceed = $update_site['state'];
@@ -405,49 +404,39 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     }
 
     if ( ! $report && $commit ) {
-      // Determine if any updates were actually performed in the environment.
-      $diff = (array)$env->diffstat();
-      if (!empty($diff)) {
-        // Auto-commit updates with a generic message.
-        if ($workflow = $env->commitChanges('Updates applied by Mass Wordpress Update terminus plugin.')) {
-          if (is_string($workflow)) {
-            $this->log()->info($workflow);
-          } else {
-            $workflow->wait();
-            $this->workflowOutput($workflow);
-          }
-        } else {
-          $this->log()->error('Unable to perform automatic update commit for {environ} environment of {name} site.', array(
-            'environ' => $environ,
-            'name' => $name,
-          ));
-          return false;
-        }
-      }
-    }
 
-    if ( ! $report ) {
-      // Set connection mode to git.
-      $workflow = $env->changeConnectionMode('git');
-      if (is_string($workflow)) {
-        $this->log()->info($workflow);
-      } else {
-        $workflow->wait();
-        $this->workflowOutput($workflow);
-      }
-      // Completion message.
-      $this->log()->notice('Finished plugins updates for {environ} environment of {name} site.', array(
-        'environ' => $environ,
-        'name' => $name,
-      ));
+      // Commit all changes
+      $this->execute( 
+        'echo y | terminus site code commit --site='. $name .' --env='. $environ .' --message="Updates applied by Mass Wordpress Update terminus plugin."',
+        true,
+        true
+      );
+
     }
 
     // Doing auto-deploy
     if ( $proceed && ( $this->isAutoDeploy() || $this->yamlGetSiteSetting( $name, 'auto-deploy' ) ) ) {
 
+      // Set connection back to sftp.
+      if ( $mode == 'git' ) {
+
+        $mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+
+      }
+
       $autoDeployTest = $this->auto_deploy( $name, 'test' );
 
       $autoDeployLive = $this->auto_deploy( $name, 'live' );
+
+    }
+
+    if ( ! $report ) {
+
+      // Completion message.
+      $this->log()->notice('Finished plugins updates for {environ} environment of {name} site.', array(
+        'environ' => $environ,
+        'name' => $name,
+      ));
 
     }
 
@@ -773,44 +762,9 @@ class MassWordPressUpdateCommand extends TerminusCommand {
    */
   private function setSiteConnectionMode( $siteName, $siteEnv, $siteCon ) {
 
-    if ( $siteCon === 'git' || $siteCon === 'sftp' ) {
+    $this->execute( 'terminus site set-connection-mode --site='. $siteName .' --env='. $siteEnv .' --mode='. $siteCon , true, true, true );
 
-      $args = array(
-        'site' => $siteName,
-        'env'  => $siteEnv,
-      );
-
-      $site = $this->sites->get(
-        $this->input()->siteName(['args' => $args])
-      );
-
-      $env  = $site->environments->get(
-        $this->input()->env(array('args' => $args, 'site' => $site))
-      );
-
-      $mode = $env->info('connection_mode');
-
-      // Return if already in target connection mode
-      if ( $mode === $siteCon ) return true;
-
-      // Changing connection mode
-      $workflow = $env->changeConnectionMode( $siteCon );
-
-      if ( is_string( $workflow ) ) {
-
-        $this->log()->info( $workflow );
-
-      } else {
-
-        $workflow->wait();
-
-        $this->workflowOutput($workflow);
-
-      }
-
-    }
-
-    return false;
+    return $siteCon;
 
   }
 

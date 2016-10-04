@@ -2,10 +2,9 @@
 
 namespace Terminus\Commands;
 
-use Terminus\Commands\TerminusCommand;
-use Terminus\Commands\SiteCommand;
-use Terminus\Exceptions\TerminusException;
 use Terminus\Collections\Sites;
+use Terminus\Commands\TerminusCommand;
+use Terminus\Exceptions\TerminusException;
 use Terminus\Models\Organization;
 use Terminus\Models\Site;
 use Terminus\Models\Upstreams;
@@ -27,7 +26,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
   private $yaml_settings;
 
 
-  
+
   /**
    * Perform WordPress mass updates on sites.
    *
@@ -83,7 +82,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
    *
    * [--exclude]
    * : A comma separated list of sites to be excluded from updates.
-   * 
+   *
    * [--config-file]
    * : Path to the yml config file
    *
@@ -127,7 +126,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     }
 
     else if (isset($this->assoc_args['name'])) {
-      $sites = $this->filterByName($sites, $assoc_args['name']);
+      $this->sites->filterByName($assoc_args['name']);
     }
 
     if (isset($this->assoc_args['owner'])) {
@@ -135,13 +134,15 @@ class MassWordPressUpdateCommand extends TerminusCommand {
       if ($owner_uuid == 'me') {
         $owner_uuid = Session::getData()->user_uuid;
       }
-      $sites = $this->filterByOwner($sites, $owner_uuid);
+      $this->sites->filterByOwner($owner_uuid);
     }
 
     // Check if config file included
     if (isset($assoc_args['config-file'])) {
       $this->yaml_settings = $this->parseYaml($assoc_args['config-file']);
     }
+
+    $sites = $this->sites->all();
 
     if (count($sites) == 0) {
       $this->failure('You have no sites.');
@@ -194,7 +195,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
           $this->update( $args, $assoc_args );
 
         } else {
-          
+
           $this->log()->info('{name} excluded from updates', ['name' => $site->get('name')]);
 
         }
@@ -326,7 +327,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     }
 
     if (!$report) {
-      
+
       // Beginning message.
       $this->log()->notice('==> Started plugins updates for {environ} environment of {name} site.', array(
         'environ' => $environ,
@@ -406,7 +407,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     if ( ! $report && $commit ) {
 
       // Commit all changes
-      $this->execute( 
+      $this->execute(
         'echo y | terminus site code commit --site='. $name .' --env='. $environ .' --message="Updates applied by Mass Wordpress Update terminus plugin."',
         true,
         true
@@ -475,7 +476,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     $args = array_merge( $default_args, $args );
 
     if ( $args ) {
-     
+
       foreach ( $args as $key => $value ) {
 
         switch ( $key ) {
@@ -540,7 +541,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     $args = array_merge( $default_args, $args );
 
     if ( $args ) {
-     
+
       foreach ( $args as $key => $value ) {
 
         switch ( $key ) {
@@ -548,7 +549,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
           case 'cc':
             $command .= ( $value ? ' --cc' : '' );
             break;
-          
+
           case 'note':
             $command .= ( $value ? ' --note="' . $value . '"': '' );
             break;
@@ -668,43 +669,6 @@ class MassWordPressUpdateCommand extends TerminusCommand {
   /**
    * Filters an array of sites by whether the user is an organizational member
    *
-   * @param Site[] $sites An array of sites to filter by
-   * @param string $regex Non-delimited PHP regex to filter site names by
-   * @return Site[]
-   */
-  private function filterByName($sites, $regex = '(.*)') {
-    $filtered_sites = array_filter(
-      $sites,
-      function($site) use ($regex) {
-        preg_match("~$regex~", $site->get('name'), $matches);
-        $is_match = !empty($matches);
-        return $is_match;
-      }
-    );
-    return $filtered_sites;
-  }
-
-  /**
-   * Filters an array of sites by whether the user is an organizational member
-   *
-   * @param Site[] $sites      An array of sites to filter by
-   * @param string $owner_uuid UUID of the owning user to filter by
-   * @return Site[]
-   */
-  private function filterByOwner($sites, $owner_uuid) {
-    $filtered_sites = array_filter(
-      $sites,
-      function($site) use ($owner_uuid) {
-        $is_owner = ($site->get('owner') == $owner_uuid);
-        return $is_owner;
-      }
-    );
-    return $filtered_sites;
-  }
-
-  /**
-   * Filters an array of sites by whether the user is an organizational member
-   *
    * @param Site[] $sites  An array of sites to filter by
    * @param string $org_id ID of the organization to filter for
    * @return Site[]
@@ -757,7 +721,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
   /**
    * Change a site's connection mode
    * @param $siteName : name of the site
-   * @param $siteEnv  : target environment of the site 
+   * @param $siteEnv  : target environment of the site
    * @param $siteCon  : target connection mode
    */
   private function setSiteConnectionMode( $siteName, $siteEnv, $siteCon ) {
@@ -771,7 +735,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 
-  /* YAML configurations */ 
+  /* YAML configurations */
 
   private function parseYaml( $dir ){
 
@@ -857,7 +821,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
   private function isConfigFile() {
 
     return isset($this->assoc_args['config-file']) ? true : false;
-    
+
   }
 
   private function isAutoDeploy() {
@@ -867,7 +831,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
     return isset($this->assoc_args['auto-deploy']) ? true : false;
 
   }
-  
+
   private function isUpstreamUpdate() {
 
     if ( $this->isConfigFile() ) return false;

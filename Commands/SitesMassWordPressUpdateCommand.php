@@ -374,6 +374,10 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		}
 
 
+		//	Get site info
+		$site_info = $site->serialize();
+
+
 		//	Check for pending changes in sftp mode.
 		if ( $mode == 'sftp' ) {
 
@@ -519,11 +523,28 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		//	Commit all changes
 		if ( ! $report && $commit ) {
 
-			$this->execute(
-				'echo y | terminus site code commit --site='. $name .' --env='. $environ .' --message="Updates applied by Mass Wordpress Update terminus plugin."',
-				true,
-				true
-			);
+			// $this->execute(
+			// 	'echo y | terminus site code commit --site='. $name .' --env='. $environ .' --message="Updates applied by Mass Wordpress Update terminus plugin."',
+			// 	true,
+			// 	true
+			// );
+
+			$message = 'Updates applied by Mass Wordpress Update terminus plugin.';
+
+			if ($workflow = $env->commitChanges($message)) {
+				if (is_string($workflow)) {
+					$this->log()->info($workflow);
+				} else {
+					$workflow->wait();
+					$this->workflowOutput($workflow);
+				}
+			} else {
+				$this->log()->error(
+					'Unable to perform automatic update commit for the {environ} environment of {name} site.',
+					['environ' => $environ, 'name' => $name,]
+				);
+				return false;
+			}
 
 		}
 
@@ -554,6 +575,10 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 			) );
 
 		}
+
+
+		// 	Set site connection mode back to git
+		$mode = $this->setSiteConnectionMode( $name, $environ, 'git' );
 
 
 		//	Send slack message
@@ -591,7 +616,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 					'fields'		=> array(
 						array(
 							'title'		=> 'Dashboard',
-							'value'		=> 'https://dashboard.pantheon.io/sites/',
+							'value'		=> "<https://dashboard.pantheon.io/sites/". $site_info['id'] . "|dashboard.pantheon.io>",
 							'short'		=> true
 						),
 						array(

@@ -53,10 +53,10 @@ class Update_Translator {
 			foreach ( $table_data as $key => $value ) {
 
 				$table_array[] = array(
-					'name'			=> $value[0],
-					'old_version'	=> $value[1],
-					'new_version'	=> $value[2],
-					'status'		=> $value[3],
+					'name'			=> ( isset( $value[0] ) ? $value[0] : false ),
+					'old_version'	=> ( isset( $value[1] ) ? $value[1] : false ),
+					'new_version'	=> ( isset( $value[2] ) ? $value[2] : false ),
+					'status'		=> ( isset( $value[3] ) ? $value[3] : false ),
 				);
 
 			}

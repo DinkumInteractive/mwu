@@ -532,19 +532,28 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			$message = 'Updates applied by Mass Wordpress Update terminus plugin.';
 
-			if ($workflow = $env->commitChanges($message)) {
-				if (is_string($workflow)) {
-					$this->log()->info($workflow);
+			if ( $workflow = $env->commitChanges( $message ) ) {
+
+				if ( is_string( $workflow ) ) {
+
+					$this->log()->info( $workflow );
+
 				} else {
+
 					$workflow->wait();
-					$this->workflowOutput($workflow);
+
+					$this->workflowOutput( $workflow );
 				}
+
 			} else {
+
 				$this->log()->error(
 					'Unable to perform automatic update commit for the {environ} environment of {name} site.',
-					['environ' => $environ, 'name' => $name,]
+					array( 'environ' => $environ, 'name' => $name )
 				);
+
 				return false;
+
 			}
 
 		}
@@ -589,7 +598,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			$slack_notif_text = "";
 
-			$slack_notif_text .= "*Terminus update on " . $name . "*\n\n";
+			$slack_notif_text .= "*Terminus update report on " . $name . "*\n\n";
 
 			$update_report = $this->getUpdateNotes( $update_report );
 
@@ -605,7 +614,12 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 				$slack_notif_text .= "```";
 
+			} else {
+
+				$slack_notif_text .= 'No plugin update performed';
+
 			}
+
 
 			$slack = simple_slack( $this->slack_settings['url'], array(
 				'username'		=> $this->slack_settings['username'],
@@ -696,8 +710,10 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 		}
 
+
 		// Execute commands
-		exec( $command, $update_array, $update_error );
+		$exec = exec( $command, $update_array, $update_error );
+
 
 		// Error or something happened
 		if ( $onError && $update_error ) {

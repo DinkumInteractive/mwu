@@ -61,19 +61,26 @@ $ terminus help sites mwu
 ```
 
 ## Examples:
-Display plugins updates that would be applied to all dev environments without actually performing the updates:
+* Display plugins updates that would be applied to all dev environments without actually performing the updates:
 ```
 $ terminus sites mass-wp-update --report
 ```
-Apply plugins updates, auto-commit with a generic message and change to git connection mode on all dev environments:
+
+* Apply plugins updates, auto-commit with a generic message and change to git connection mode on all dev environments:
 ```
 $ terminus sites mwu --auto-commit
 ```
-Apply plugins security updates only and skip the automatic backup on all dev environments:
+
+* Apply plugins security updates only and skip the automatic backup on all dev environments:
 ```
 $ terminus sites mwu --security-only --skip-backup
 ```
-Apply plugins updates to all live environments and prompt to continue prior to performing the updates on each site:
+
+* Apply plugins updates to all live environments and prompt to continue prior to performing the updates on each site:
 ```
 $ terminus sites mwu --env=live --confirm
 ```
+
+* With slack settings applied in yml config file, update report message can be sent to a channel of your choice. Please visit our wiki for more information. https://github.com/DinkumInteractive/mwu/wiki/Slack-Message
+
+

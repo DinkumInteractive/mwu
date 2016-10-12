@@ -2,6 +2,7 @@
 
 namespace Terminus\Commands;
 
+
 use Terminus\Models\Auth;
 use Terminus\Collections\Sites;
 use Terminus\Commands\TerminusCommand;
@@ -587,7 +588,10 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 			$date = new \DateTime();
 
 			$slack_notif_text = "";
+
 			$slack_notif_text .= "*Terminus update on " . $name . "*\n\n";
+
+			$update_report = $this->getUpdateNotes( $update_report );
 
 			if ( $update_report ) {
 
@@ -1022,6 +1026,36 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		}
 
 		return $slack_settings;
+
+	}
+
+
+	/**
+	* Parse update notes to array table
+	*
+	*/
+	private function getUpdateNotes( $update_notes ) {
+
+		require_once( 'lib/Update_Translator.php' );
+
+		$data = new \Update_Translator( $update_notes );
+
+		return $data->table_reports;
+
+	}
+
+
+	/**
+	* Parse update notes to get keyed array
+	*
+	*/
+	private function getUpdateData( $update_notes ) {
+
+		require_once( 'lib/Update_Translator.php' );
+
+		$data = new \Update_Translator( $update_notes );
+
+		return $data->data;
 
 	}
 

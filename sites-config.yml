@@ -3,6 +3,9 @@ slack_settings:
   username: slack-user-name
   icon_emoji: icon-for-chat
   url: https://hooks.slack.com/services/XXXXXXXXX/XXXXXXXXX/XXXXXXXXXXXXXXXXXXXXXXXX
+  err_notify:
+    - user-slack-1
+    - user-slack-2
 sites:
   settings:
       env: dev
@@ -13,5 +16,11 @@ sites:
       auto-deploy: true
   update:
     - name: test-site-1
+      err_notify:
+        - user-slack-3
+        - user-slack-4
     - name: test-site-2
     - name: test-site-3
+      err_notify:
+        - user-slack-5
+        - user-slack-6

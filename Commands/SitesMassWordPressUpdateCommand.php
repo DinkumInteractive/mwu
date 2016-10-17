@@ -131,7 +131,6 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		}
 
 
-
 		/* 	Fetch list of sites  */
 		$options = array();
 
@@ -314,6 +313,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		$all = $plugins ? '' : '--all';
 		$dry_run = $report ? '--dry-run' : '';
 		$update_report = array();
+		$unavailable_packages = array();
 
 
 		// Check for valid frameworks.
@@ -350,29 +350,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 		//	Get each environment url
-		$env_url = array();
-
-		foreach ( $site->environments->all() as $environment ) {
-
-			$info = $environment->serialize();
-
-			if ( isset( $info['id'] ) ) {
-
-				switch ( $info['id'] ) {
-
-					case 'dev':
-					case 'test':
-					case 'live':
-
-						$env_url[$info['id']] = $info['domain'];
-
-						break;
-
-				}
-
-			}
-
-		}
+		$env_url = $this->getSiteEnvUrl( $site );
 
 
 		//	Get site info
@@ -426,7 +404,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		if ( ! $report ) {
 
 			// Beginning message.
-			$this->log()->notice( '==> Started plugins updates for {environ} environment of {name} site.', array(
+			$this->log()->notice( 'Starting plugins updates for {environ} environment of {name} site.', array(
 				'environ' => $environ,
 				'name' => $name,
 			) );
@@ -436,8 +414,21 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		$proceed = true;
 
 
+		//	Check for errors on site
+		if ( $this->checkIsSiteDown( $env_url[$environ] ) ) {
+
+			$this->log()->error( 'Unable to update {environ} environment of {name} site due to fatal error on site.', array(
+				'environ' => $environ,
+				'name' => $name,
+			) );
+
+			$proceed = false;
+
+		}
+
+
 		// 	Doing site backup
-		if ( ! $skip && ! $report ) {
+		if ( ! $skip && ! $report && $proceed ) {
 
 			$args = array(
 				'element' => 'all',
@@ -472,10 +463,14 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 		//	Doing upsteam-update
-		if ( $this->isUpstreamUpdate() || $this->yamlGetSiteSetting( $name, 'upstream' ) ) {
+		if ( $this->isUpstreamUpdate() || $this->yamlGetSiteSetting( $name, 'upstream' ) && $proceed ) {
 
 			// Set connection to git
-			$mode = $this->setSiteConnectionMode( $name, $environ, 'git' );
+			if ( $mode == 'git' ) {
+
+				$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+
+			}
 
 			// Perform upstream update
 			$upstreamUpdate = $this->upstream_update( $name, 'dev', true );
@@ -484,36 +479,73 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		}
 
 
-
 		//	Perform wordpress updates via wp-cli.
 		if ( $proceed ) {
 
-			$wp_options = trim("plugin update $plugins $all $dry_run");
-			$tm_command = "terminus wp --site=$name --env=$environ \"$wp_options\"";
+			// 	Check plugin list
+			$pluginStatus = $this->getSitePluginStatus( $name, $environ );
 
-			// Doing update.
-			$update_site_err = array(
-				'message' => 'Unable to perform plugins updates for {environ} environment of {name} site.',
-				'args'    => array(
-					'environ' => $environ,
-					'name'    => $name,
-				),
-			);
 
-			// Set connection back to sftp.
-			if ( $mode == 'git' ) {
+			//	Check for available update
+			$update_valid = false;
 
-				$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+			$unavailable_packages = array();
+
+			foreach ( $pluginStatus as $plugin ) {
+
+				if ( $plugin->version && $plugin->update_version && $plugin->update_package ) {
+
+					$update_valid = true;
+
+				}
+
+				if ( $plugin->version && $plugin->update_version && ! $plugin->update_package ) {
+
+					$unavailable_packages[] = $plugin->name;
+
+				}
 
 			}
 
-			$update_site = $this->execute( $tm_command, false, true, $update_site_err );
 
-			$proceed = $update_site['state'];
+			//	Doing update.
+			if ( $update_valid ) {
+				
+				$wp_options = trim("plugin update $plugins $all $dry_run");
 
-			$update_report = ( isset( $update_site['data'] ) ? $update_site['data'] : false );
+				$tm_command = "terminus wp --site=$name --env=$environ \"$wp_options\"";
 
-			// Reload the environment.
+				$update_site_err = array(
+					'message' => 'Unable to perform plugins updates for {environ} environment of {name} site.',
+					'args'    => array(
+						'environ' => $environ,
+						'name'    => $name,
+					),
+				);
+
+				//	Set connection back to sftp.
+				if ( $mode == 'git' ) {
+
+					$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+
+				}
+
+				$update_site = $this->execute( $tm_command, false, true, $update_site_err );
+
+				$proceed = $update_site['state'];
+
+				$update_report = ( isset( $update_site['data'] ) ? $update_site['data'] : false );
+
+			} else {
+
+				$this->log()->notice( 'There are no available update found in {environ} environment of {name} site.', array(
+					'environ' => $environ,
+					'name' => $name,
+				) );
+
+			}
+
+			//	Reload the environment.
 			$env  = $site->environments->get(
 				$this->input()->env( array( 'args' => $assoc_args, 'site' => $site ) )
 			);
@@ -521,17 +553,60 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		}
 
 
-		//	Commit all changes
-		if ( ! $report && $commit ) {
+		//	Check site health
+		$errEnvs = array();
 
-			// $this->execute(
-			// 	'echo y | terminus site code commit --site='. $name .' --env='. $environ .' --message="Updates applied by Mass Wordpress Update terminus plugin."',
-			// 	true,
-			// 	true
-			// );
+		$isError = false;
+
+		foreach ( $env_url as $env_name => $url ) {
+
+			$error = $this->checkIsSiteDown( $env_url[$environ] );
+
+			if ( $error ) {
+
+				$isError = true;
+
+			}
+
+			$errEnvs[$env_name] = $error;
+
+		}
+
+		if ( $isError ) {
+
+			$proceed = false;
+
+			foreach ( $errEnvs as $env_name => $value ) {
+
+				if ( $value ) {
+
+					$this->log()->notice( 'Fatal error found in {environ} environment of {name} site. Auto commit and deploy are not performed.', array(
+						'environ' => $env_name,
+						'name' => $name,
+					) );
+
+				}
+
+			}
+
+		}
+
+
+		//	Commit all changes
+		if ( ! $report && ! $isError && $commit ) {
+
+
+			//	Set connection back to sftp.
+			if ( $mode == 'git' ) {
+
+				$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+
+			}
 
 			$message = 'Updates applied by Mass Wordpress Update terminus plugin.';
 
+
+			// 	Commit changes
 			if ( $workflow = $env->commitChanges( $message ) ) {
 
 				if ( is_string( $workflow ) ) {
@@ -556,6 +631,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			}
 
+
 		}
 
 
@@ -577,7 +653,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 		//	Completion message.
-		if ( ! $report ) {
+		if ( ! $report && ! $isError ) {
 
 			$this->log()->notice( 'Finished plugins updates for {environ} environment of {name} site.', array(
 				'environ' => $environ,
@@ -588,7 +664,11 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 		// 	Set site connection mode back to git
-		$mode = $this->setSiteConnectionMode( $name, $environ, 'git' );
+		if ( ! $report && ! $isError ) {
+
+			$mode = $this->setSiteConnectionMode( $name, $environ, 'git' );
+
+		}
 
 
 		//	Send slack message
@@ -602,6 +682,28 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			$update_report = $this->getUpdateNotes( $update_report );
 
+			$team_member = $this->getSlackTeamMember( $name );
+
+			if ( $isError ) {
+
+				$slack_notif_text .= 'Fatal error found on following environments.' . "\n";
+
+				$slack_notif_text .= "```";
+
+				foreach ( $errEnvs as $errEnvName => $errEnvStatus ) {
+
+					if ( $errEnvStatus ) {
+
+						$slack_notif_text .= $errEnvName . "\n";
+
+					}
+
+				}
+
+				$slack_notif_text .= "```" . "\n";
+
+			}
+
 			if ( $update_report ) {
 
 				$slack_notif_text .= "```";
@@ -612,16 +714,31 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 				}
 
-				$slack_notif_text .= "```";
+				$slack_notif_text .= "```" . "\n";
 
 			} else {
 
-				$slack_notif_text .= 'No plugin update performed';
+				$slack_notif_text .= 'No plugin update performed.' . "\n";
+
+			}
+			
+			if ( $unavailable_packages ) {
+
+				$slack_notif_text .= 'Unavailable plugin update found.' . "\n";
+
+				$slack_notif_text .= "```";
+
+				foreach ( $unavailable_packages as $unavailable_package ) {
+
+					$slack_notif_text .= '- ' . $unavailable_package . "\n";
+
+				}
+
+				$slack_notif_text .= "```";
 
 			}
 
-
-			$slack = simple_slack( $this->slack_settings['url'], array(
+			$payload = array(
 				'username'		=> $this->slack_settings['username'],
 				'channel'		=> $this->slack_settings['channel'],
 				'icon_emoji'	=> $this->slack_settings['icon_emoji'],
@@ -659,9 +776,30 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 					'footer_icon'	=> 'https://platform.slack-edge.com/img/default_application_icon.png',
 					'ts'			=> $date->getTimestamp()
 				) ),
-			) );
+			);
+
+			$slack = simple_slack( $this->slack_settings['url'], $payload );
 
 			$result = $slack->send();
+
+
+			// 	Send message to configured team member
+			if ( $unavailable_packages && $team_member || $isError ) {
+
+				foreach ( $team_member as $member ) {
+
+					$memberChannel = "@$member";
+
+					$payload['channel'] = "@$member";
+
+					$slack = simple_slack( $this->slack_settings['url'], $payload );
+
+					$result = $slack->send();
+
+				}
+
+			}
+
 
 		}
 
@@ -738,7 +876,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			$response['data'] = $update_error;
 
-			return $response;
+			$response['error'] = $update_error;
 
 		}
 
@@ -1072,6 +1210,143 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		$data = new \Update_Translator( $update_notes );
 
 		return $data->data;
+
+	}
+
+
+	/**
+	* Get dev, test, and live url of a site
+	*
+	*/
+	private function getSiteEnvUrl( $site ) {
+
+		$env_url = array();
+
+		foreach ( $site->environments->all() as $environment ) {
+
+			$info = $environment->serialize();
+
+			if ( isset( $info['id'] ) ) {
+
+				switch ( $info['id'] ) {
+
+					case 'dev':
+					case 'test':
+					case 'live':
+
+						$env_url[$info['id']] = $info['domain'];
+
+						break;
+
+				}
+
+			}
+
+		}
+
+		return $env_url;
+
+	}
+
+
+	/**
+	* Function to get dry run data
+	*
+	*/
+	private function getSitePluginStatus( $name, $environ ) {
+
+		$result = false;
+
+		$wp_options = "plugin list --all --fields=name,status,version,update_version,update_package --format=json";
+
+		$tm_command = "terminus wp \"$wp_options\" --site=$name --env=$environ";
+
+		$exec = exec( $tm_command, $on_success, $on_error );
+
+		if ( $on_success && isset( $on_success[0] ) ) {
+
+			$result = json_decode( $on_success[0] );
+
+		}
+
+		return $result;
+
+	}
+
+
+	/**
+	* Function to alert slack user of unavailable packages
+	*
+	*/
+	private function getSlackTeamMember( $site_name ) {
+
+		$team_member_name = $this->yamlGetSiteSetting( $site_name, 'err_notify' );
+
+		if ( ! $team_member_name ) {
+
+			$team_member_name = ( isset( $this->yaml_settings['slack_settings']['err_notify'] ) ? $this->yaml_settings['slack_settings']['err_notify'] : false );
+
+		}
+
+		return $team_member_name;
+
+	}
+
+
+	/**
+	* Function to check for string in a site
+	*
+	*/
+	private function siteFindStr( $url, $find ) {
+
+		$ch = curl_init( $url );
+
+		curl_setopt( $ch, CURLOPT_FOLLOWLOCATION, true );
+
+		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
+
+		$text = curl_exec( $ch );
+
+		$test = strpos( $text, $find );
+
+		if ( $test === false ) return false;
+
+		return true;
+
+	}
+
+
+	/**
+	* Function to check if a site is down
+	*
+	*/
+	private function checkIsSiteDown( $url ) {
+
+		exec( 'curl -sL -w "%{http_code}" "'. $url .'"', $on_success );
+
+		preg_match_all( '!\d+!', end( $on_success ), $matches );
+
+		$code = intval( implode( ' ', $matches[0] ) );
+
+		$err_string = 'Fatal error:'; 
+
+		// $err_string = '<b>Fatal error</b>:'; 
+
+		if ( $code === 500 ) return true;
+
+		if ( $on_success ) {
+
+			foreach ( $on_success as $value ) {
+				
+				$test = ( strpos( $value, $err_string ) !== false );
+
+				if ( $test ) return true;
+
+			}
+
+		}
+
+		return false;
 
 	}
 

@@ -462,13 +462,13 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		}
 
 
-		//	Doing upsteam-update
+		//	Doing upstream-update
 		if ( $this->isUpstreamUpdate() || $this->yamlGetSiteSetting( $name, 'upstream' ) && $proceed ) {
 
 			// Set connection to git
-			if ( $mode == 'git' ) {
+			if ( $mode == 'sftp' ) {
 
-				$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+				$mode = $this->setSiteConnectionMode( $name, $environ, 'git' );
 
 			}
 

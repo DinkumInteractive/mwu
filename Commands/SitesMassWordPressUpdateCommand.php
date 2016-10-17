@@ -639,11 +639,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		if ( $proceed && ( $this->isAutoDeploy() || $this->yamlGetSiteSetting( $name, 'auto-deploy' ) ) ) {
 
 			// Set connection back to sftp.
-			if ( $mode == 'git' ) {
-
-				$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
-
-			}
+			$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
 
 			$autoDeployTest = $this->auto_deploy( $name, 'test' );
 
@@ -780,7 +776,11 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			$slack = simple_slack( $this->slack_settings['url'], $payload );
 
-			$result = $slack->send();
+			if ( $update_report ) {
+
+				$result = $slack->send();
+
+			}
 
 
 			// 	Send message to configured team member

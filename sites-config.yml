@@ -1,3 +1,4 @@
+# terminus_dir: 'terminus/install/dir' (optional)
 slack_settings:
   channel: slack-channel-name
   username: slack-user-name

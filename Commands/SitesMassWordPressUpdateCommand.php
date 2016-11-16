@@ -118,7 +118,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			$default_config_file = dirname(__DIR__) . '/sites-config.yml';
 
-			$this->yaml_settings = $this->yamlParseFile($default_config_file);
+			$this->yaml_settings = $this->yamlParseFile( $default_config_file );
 
 		}
 
@@ -376,7 +376,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		} else {
 
 			// Set connection mode to sftp.
-			$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+			$mode = $this->changeConnectionMode( $env, 'sftp' );
 
 		}
 
@@ -468,14 +468,14 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 			// Set connection to git
 			if ( $mode == 'sftp' ) {
 
-				$mode = $this->setSiteConnectionMode( $name, $environ, 'git' );
+				$mode = $this->changeConnectionMode( $env, 'git' );
 
 			}
 
 			// Perform upstream update
 			$upstreamUpdate = $this->upstream_update( $name, 'dev', true );
 			$proceed = $upstreamUpdate['state'];
-
+			
 		}
 
 
@@ -513,7 +513,9 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 				
 				$wp_options = trim("plugin update $plugins $all $dry_run");
 
-				$tm_command = "terminus wp --site=$name --env=$environ \"$wp_options\"";
+				$tm_command_path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
+
+				$tm_command = "$tm_command_path wp --site=$name --env=$environ \"$wp_options\"";
 
 				$update_site_err = array(
 					'message' => 'Unable to perform plugins updates for {environ} environment of {name} site.',
@@ -524,9 +526,9 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 				);
 
 				//	Set connection back to sftp.
-				if ( $mode == 'git' ) {
+				if ( $env->get( 'connection_mode' ) == 'git' ) {
 
-					$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+					$mode = $this->changeConnectionMode( $env, 'sftp' );
 
 				}
 
@@ -599,7 +601,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 			//	Set connection back to sftp.
 			if ( $mode == 'git' ) {
 
-				$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+				$mode = $this->changeConnectionMode( $env, 'sftp' );
 
 			}
 
@@ -639,7 +641,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		if ( $proceed && ( $this->isAutoDeploy() || $this->yamlGetSiteSetting( $name, 'auto-deploy' ) ) ) {
 
 			// Set connection back to sftp.
-			$mode = $this->setSiteConnectionMode( $name, $environ, 'sftp' );
+			$mode = $this->changeConnectionMode( $env, 'sftp' );
 
 			$autoDeployTest = $this->auto_deploy( $name, 'test' );
 
@@ -662,7 +664,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		// 	Set site connection mode back to git
 		if ( ! $report && ! $isError ) {
 
-			$mode = $this->setSiteConnectionMode( $name, $environ, 'git' );
+			$mode = $this->changeConnectionMode( $env, 'git' );
 
 		}
 
@@ -928,7 +930,9 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 	*/
 	private function upstream_update( $siteName, $toEnv, $apply, $args = array() ) {
 
-		$command =  'echo y | terminus site upstream-updates';
+		$path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
+
+		$command =  $path .' site upstream-updates';
 
 		$command .= ( $apply ? ' apply' : ' list' );
 
@@ -963,6 +967,10 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 		}
 
+
+		// 	always say yes to prompt
+		$command .= ' --yes';
+
 		$upstream = $this->execute( $command, true, true, true );
 
 		return $upstream;
@@ -984,7 +992,9 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 		$fromEnv = ( $toEnv === 'live' ? 'test' : 'dev' );
 
-		$command =  'terminus site deploy';
+		$path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
+
+		$command =  $path . ' site deploy';
 
 		$command .= ' --site=' . $siteName;
 
@@ -1039,11 +1049,27 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 	* @param $siteEnv  : target environment of the site
 	* @param $siteCon  : target connection mode
 	*/
-	private function setSiteConnectionMode( $siteName, $siteEnv, $siteCon ) {
+	private function changeConnectionMode( $env, $connectionMode ) {
 
-		$this->execute( 'terminus site set-connection-mode --site='. $siteName .' --env='. $siteEnv .' --mode='. $siteCon , true, true, true );
+    	$mode = $env->get('connection_mode');
 
-		return $siteCon;
+		if ( $mode === $connectionMode ) return $connectionMode;
+
+		$workflow = $env->changeConnectionMode( $connectionMode );
+
+		if ( is_string( $workflow ) ) {
+
+			$this->log()->info( $workflow );
+
+		} else {
+
+			$workflow->wait();
+
+			$this->workflowOutput( $workflow );
+
+			return $connectionMode;
+
+		}
 
 	}
 
@@ -1141,6 +1167,27 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 		// we can add config validations here
 		return $settings;
+
+	}
+
+
+	/**
+	* Get terminus executables path.
+	*
+	* @param string $name
+	*   Name of the site.
+	* @param string $key
+	*   Key of value needed.
+	*/
+	private function yamlGetExecPath(){
+
+		if ( ! $this->yaml_settings ) return false;
+
+		if ( ! isset( $this->yaml_settings['terminus_dir'] ) ) return false;
+
+		$path = $this->yaml_settings['terminus_dir'];
+
+		return $path;
 
 	}
 
@@ -1259,7 +1306,9 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 		$wp_options = "plugin list --all --fields=name,status,version,update_version,update_package --format=json";
 
-		$tm_command = "terminus wp \"$wp_options\" --site=$name --env=$environ";
+		$tm_command_path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
+
+		$tm_command = "$tm_command_path wp \"$wp_options\" --site=$name --env=$environ";
 
 		$exec = exec( $tm_command, $on_success, $on_error );
 

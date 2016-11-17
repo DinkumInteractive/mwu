@@ -376,7 +376,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		} else {
 
 			// Set connection mode to sftp.
-			$mode = $this->changeConnectionMode( $env, 'sftp' );
+			$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
 
 		}
 
@@ -415,7 +415,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 		//	Check for errors on site
-		if ( $this->checkIsSiteDown( $env_url[$environ] ) ) {
+		if ( $this->checkIsSiteDown( $name, $environ ) ) {
 
 			$this->log()->error( 'Unable to update {environ} environment of {name} site due to fatal error on site.', array(
 				'environ' => $environ,
@@ -466,21 +466,34 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		if ( $this->isUpstreamUpdate() || $this->yamlGetSiteSetting( $name, 'upstream' ) && $proceed ) {
 
 			// Set connection to git
-			if ( $mode == 'sftp' ) {
-
-				$mode = $this->changeConnectionMode( $env, 'git' );
-
-			}
+			$mode = $this->changeConnectionMode( $name, $environ, 'git' );
 
 			// Perform upstream update
 			$upstreamUpdate = $this->upstream_update( $name, 'dev', true );
 			$proceed = $upstreamUpdate['state'];
 			
+			// Set connection to sftp
+			$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
+
+		}
+
+
+		//	Check for errors on site
+		if ( $this->checkIsSiteDown( $name, $environ ) ) {
+
+			$this->log()->error( 'Unable to continue on updating {environ} environment of {name} site due to fatal error on site.', array(
+				'environ' => $environ,
+				'name' => $name,
+			) );
+
+			$proceed = false;
+
 		}
 
 
 		//	Perform wordpress updates via wp-cli.
 		if ( $proceed ) {
+
 
 			// 	Check plugin list
 			$pluginStatus = $this->getSitePluginStatus( $name, $environ );
@@ -526,12 +539,9 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 				);
 
 				//	Set connection back to sftp.
-				if ( $env->get( 'connection_mode' ) == 'git' ) {
+				$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
 
-					$mode = $this->changeConnectionMode( $env, 'sftp' );
-
-				}
-
+				// 	Update all plugin on site
 				$update_site = $this->execute( $tm_command, false, true, $update_site_err );
 
 				$proceed = $update_site['state'];
@@ -562,7 +572,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 		foreach ( $env_url as $env_name => $url ) {
 
-			$error = $this->checkIsSiteDown( $env_url[$environ] );
+			$error = $this->checkIsSiteDown( $name, $env_name );
 
 			if ( $error ) {
 
@@ -583,8 +593,8 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 				if ( $value ) {
 
 					$this->log()->notice( 'Fatal error found in {environ} environment of {name} site. Auto commit and deploy are not performed.', array(
-						'environ' => $env_name,
-						'name' => $name,
+						'environ'	=> $env_name,
+						'name'		=> $name,
 					) );
 
 				}
@@ -599,11 +609,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 			//	Set connection back to sftp.
-			if ( $mode == 'git' ) {
-
-				$mode = $this->changeConnectionMode( $env, 'sftp' );
-
-			}
+			$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
 
 			$message = 'Updates applied by Mass Wordpress Update terminus plugin.';
 
@@ -641,7 +647,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		if ( $proceed && ( $this->isAutoDeploy() || $this->yamlGetSiteSetting( $name, 'auto-deploy' ) ) ) {
 
 			// Set connection back to sftp.
-			$mode = $this->changeConnectionMode( $env, 'sftp' );
+			$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
 
 			$autoDeployTest = $this->auto_deploy( $name, 'test' );
 
@@ -664,7 +670,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		// 	Set site connection mode back to git
 		if ( ! $report && ! $isError ) {
 
-			$mode = $this->changeConnectionMode( $env, 'git' );
+			$mode = $this->changeConnectionMode( $name, $environ, 'git' );
 
 		}
 
@@ -1045,31 +1051,17 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 	/**
 	* Change a site's connection mode
-	* @param $siteName : name of the site
-	* @param $siteEnv  : target environment of the site
-	* @param $siteCon  : target connection mode
+	* @param $name 	: name of the site
+	* @param $env  	: target environment of the site
+	* @param $mode  : target connection mode
 	*/
-	private function changeConnectionMode( $env, $connectionMode ) {
+	private function changeConnectionMode( $name, $env, $mode ) {
 
-    	$mode = $env->get('connection_mode');
+		$path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
 
-		if ( $mode === $connectionMode ) return $connectionMode;
-
-		$workflow = $env->changeConnectionMode( $connectionMode );
-
-		if ( is_string( $workflow ) ) {
-
-			$this->log()->info( $workflow );
-
-		} else {
-
-			$workflow->wait();
-
-			$this->workflowOutput( $workflow );
-
-			return $connectionMode;
-
-		}
+		exec( $path .  " site set-connection-mode --site=$name --env=$env --mode=$mode" );
+		
+		return $mode;
 
 	}
 
@@ -1369,23 +1361,63 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 	* Function to check if a site is down
 	*
 	*/
-	private function checkIsSiteDown( $url ) {
+	private function checkIsSiteDown( $name, $environ ) {
 
+		$assoc_args = array(
+			'site' => $name,
+			'env'  => $environ,
+		);
+
+		$site = $this->sites->get(
+			$this->input()->siteName( array( 'args' => $assoc_args ) )
+		);
+
+		$env  = $site->environments->get(
+			$this->input()->env( array( 'args' => $assoc_args, 'site' => $site ) )
+		);
+
+		$env_url = $this->getSiteEnvUrl( $site );
+
+		// 	Get url
+		$url = $env_url[$environ];
+
+		//	Check return code
 		exec( 'curl -sL -w "%{http_code}" "'. $url .'"', $on_success );
 
 		preg_match_all( '!\d+!', end( $on_success ), $matches );
 
 		$code = intval( implode( ' ', $matches[0] ) );
 
-		$err_string = 'Fatal error:'; 
+		$err_string = 'Fatal error:';
 
-		// $err_string = '<b>Fatal error</b>:'; 
-
-		if ( $code === 500 ) return true;
+		if ( $code === 500 || $code === 0 ) return true;
 
 		if ( $on_success ) {
 
 			foreach ( $on_success as $value ) {
+				
+				$test = ( strpos( $value, $err_string ) !== false );
+
+				if ( $test ) return true;
+
+			}
+
+		}
+
+		// 	Check fatal error
+		$command_path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
+
+		$wp_cli = "plugin list 2>&1";
+
+		$command = "$command_path wp \"$wp_cli\" --site=$name --env=$environ";
+
+		exec( $command, $response );
+
+		if ( $response ) {
+
+			$err_string = 'Fatal error:';
+			
+			foreach ( $response as $value ) {
 				
 				$test = ( strpos( $value, $err_string ) !== false );
 

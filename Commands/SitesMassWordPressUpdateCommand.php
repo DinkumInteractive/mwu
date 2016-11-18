@@ -504,22 +504,25 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			$unavailable_packages = array();
 
-			foreach ( $pluginStatus as $plugin ) {
+			if ( $pluginStatus ) {
 
-				if ( $plugin->version && $plugin->update_version && $plugin->update_package ) {
+				foreach ( $pluginStatus as $plugin ) {
 
-					$update_valid = true;
+					if ( $plugin->version && $plugin->update_version && $plugin->update_package ) {
 
-				}
+						$update_valid = true;
 
-				if ( $plugin->version && $plugin->update_version && ! $plugin->update_package ) {
+					}
 
-					$unavailable_packages[] = $plugin->name;
+					if ( $plugin->version && $plugin->update_version && ! $plugin->update_package ) {
+
+						$unavailable_packages[] = $plugin->name;
+
+					}
 
 				}
 
 			}
-
 
 			//	Doing update.
 			if ( $update_valid ) {
@@ -1416,10 +1419,16 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		if ( $response ) {
 
 			$err_string = 'Fatal error:';
+
+			$err_string2 = 'Parse error:';
 			
 			foreach ( $response as $value ) {
 				
 				$test = ( strpos( $value, $err_string ) !== false );
+
+				if ( $test ) return true;
+
+				$test = ( strpos( $value, $err_string2 ) !== false );
 
 				if ( $test ) return true;
 

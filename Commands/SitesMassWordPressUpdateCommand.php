@@ -469,8 +469,11 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 			$mode = $this->changeConnectionMode( $name, $environ, 'git' );
 
 			// Perform upstream update
-			$upstreamUpdate = $this->upstream_update( $name, 'dev', true );
+			$upstreamUpdate = $this->upstream_update( $name, 'dev' );
+
 			$proceed = $upstreamUpdate['state'];
+
+			$upstreamError = ( $proceed ? false : true );
 			
 			// Set connection to sftp
 			$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
@@ -479,7 +482,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 		//	Check for errors on site
-		if ( $this->checkIsSiteDown( $name, $environ ) ) {
+		if ( $proceed && $this->checkIsSiteDown( $name, $environ ) ) {
 
 			$this->log()->error( 'Unable to continue on updating {environ} environment of {name} site due to fatal error on site.', array(
 				'environ' => $environ,
@@ -571,7 +574,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		//	Check site health
 		$errEnvs = array();
 
-		$isError = false;
+		$isError = ( isset( $isError ) ? $isError : false );
 
 		foreach ( $env_url as $env_name => $url ) {
 
@@ -608,7 +611,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 		//	Commit all changes
-		if ( ! $report && ! $isError && $commit ) {
+		if ( ! $report && ! $isError && $commit && $proceed ) {
 
 
 			//	Set connection back to sftp.
@@ -741,7 +744,13 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 				}
 
-				$slack_notif_text .= "```";
+				$slack_notif_text .= "```" . "\n";
+
+			}
+
+			if ( isset( $upstreamError ) && $upstreamError ) {
+
+				$slack_notif_text .= 'Upstream update failed.' . "\n";
 
 			}
 
@@ -787,6 +796,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			$slack = simple_slack( $this->slack_settings['url'], $payload );
 
+
 			if ( $update_report ) {
 
 				$result = $slack->send();
@@ -795,7 +805,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 			// 	Send message to configured team member
-			if ( $unavailable_packages && $team_member || $isError ) {
+			if ( $unavailable_packages && $team_member || $isError || $upstreamError ) {
 
 				foreach ( $team_member as $member ) {
 
@@ -937,52 +947,111 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 	* @param array $args
 	*   Additional arguments ( accept-upstream : bool, updatedb : bool )
 	*/
-	private function upstream_update( $siteName, $toEnv, $apply, $args = array() ) {
+	private function upstream_update( $siteName, $environ ) {
 
-		$path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
-
-		$command =  $path .' site upstream-updates';
-
-		$command .= ( $apply ? ' apply' : ' list' );
-
-		$command .= ' --site=' . $siteName;
-
-		$command .= ' --env=' . $toEnv;
-
-		$default_args = array(
-			'accept-upstream' => true,
-			'updatedb'        => true,
+		$assoc_args = array(
+			'site' 				=> $siteName,
+			'env'  				=> $environ,
+			'updatedb'			=> true,
+			'accept-upstream'	=> true,
 		);
 
-		$args = array_merge( $default_args, $args );
+		$site = $this->sites->get(
+			$this->input()->siteName( array( 'args' => $assoc_args ) )
+		);
 
-		if ( $args ) {
+		$response = array(
+			'state'		=> false,
+			'updates'	=> false,
+		);
 
-			foreach ( $args as $key => $value ) {
+		$upstream_updates = $site->upstream->getUpdates();
 
-				switch ( $key ) {
+		if ( isset( $upstream_updates->remote_url ) && isset( $upstream_updates->behind ) ) {
 
-					case 'accept-upstream':
-						$command .= ( $value ? ' --accept-upstream' : '' );
-					break;
+			if (!isset($upstream_updates) || empty((array)$upstream_updates->update_log)) {
+				
+                $this->log()->info('No updates to apply.');
+                
+                $response['state'] = true;
+                
+                return $response;
+                
+            }
 
-					case 'updatedb':
-						$command .= ( $value ? ' --updatedb' : '' );
-					break;
+		} else {
+
+			$this->failure( 'There was a problem checking your upstream status. Please try again.' );
+
+		}
+
+		if ( ! empty( $upstream_updates->update_log ) ) {
+
+			$env = $site->environments->get(
+				$this->input()->env(['args' => $assoc_args, 'site' => $siteName,])
+			);
+
+			if ( in_array( $env->id, ['test', 'live',] ) ) {
+
+				$this->failure( 'Upstream updates cannot be applied to the {env} environment',
+					array( 'env' => $env->id )
+				);
+
+			}
+
+			$updatedb = ( isset( $assoc_args['updatedb'] ) && $assoc_args['updatedb'] );
+
+			$acceptupstream = ( isset( $assoc_args['accept-upstream'] ) && $assoc_args['accept-upstream'] );
+
+			$workflow = $env->applyUpstreamUpdates( $updatedb, $acceptupstream );
+
+			while ( ! $workflow->isFinished() ) {
+
+				$workflow->fetch();
+
+				sleep(3);
+
+				fwrite( STDERR, '.' );
+
+			}
+
+			echo "\n";
+
+			if ( $workflow->isSuccessful() ) {
+
+				$response['state'] = true;
+
+				$response['updates'] = $upstream_updates->update_log;
+
+			} else {
+
+				$response['state'] = false;
+
+				$response['updates'] = '';
+
+				$final_task = $workflow->get('final_task');
+
+				if ( ( $final_task != null ) && ! empty( $final_task->messages ) ) {
+
+					foreach ( $final_task->messages as $data => $message ) {
+
+						$response['updates'] .= $message->message . "\n";
+
+					}
 
 				}
 
 			}
 
+			$this->workflowOutput( $workflow );
+
+		} else {
+
+			$this->log()->warning('There are no upstream updates to apply.');
+
 		}
 
-
-		// 	always say yes to prompt
-		$command .= ' --yes';
-
-		$upstream = $this->execute( $command, true, true, true );
-
-		return $upstream;
+		return $response;
 
 	}
 

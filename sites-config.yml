@@ -1,4 +1,3 @@
-# terminus_dir: 'terminus/install/dir' (optional)
 slack_settings:
   channel: slack-channel-name
   username: slack-user-name
@@ -10,7 +9,6 @@ slack_settings:
 sites:
   settings:
       env: dev
-      report: false
       upstream: true
       auto-commit: true
       skip-backup: true

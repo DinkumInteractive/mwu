@@ -3,7 +3,6 @@
 namespace Terminus\Commands;
 
 
-use Terminus\Models\Auth;
 use Terminus\Collections\Sites;
 use Terminus\Commands\TerminusCommand;
 use Terminus\Exceptions\TerminusException;
@@ -15,6 +14,7 @@ use Terminus\Models\Workflow;
 use Terminus\Session;
 use Terminus\Utils;
 
+
 /**
  * Actions on multiple sites
  *
@@ -24,11 +24,10 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 
 	public $sites;
-	public $sites_list;
-	private $args;
+
 	private $assoc_args;
-	private $yaml_settings;
-	private $slack_settings;
+	private $settings;
+	private $queue;
 
 
 	/**
@@ -47,6 +46,8 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 		$this->sites = new Sites();
 
+		$this->load_helpers();
+
 	}
 
 
@@ -57,11 +58,8 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 	*
 	* ## OPTIONS
 	*
-	* [--env=<env>]
-	* : Filter sites by environment.  Default is 'dev'.
-	*
-	* [--report]
-	* : Display the plugins or themes that need updated without actually performing the updates.
+	* [--upstream]
+	* : Apply upstream updates to site and check if it caused any error.
 	*
 	* [--auto-commit]
 	* : Commit changes with a generic message and switch back to git mode after performing the updates on each site.
@@ -69,26 +67,26 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 	* [--auto-deploy]
 	* : Automatically deploy stuff to `test` and `live`.
 	*
-	* [--confirm]
-	* : Prompt to confirm before actually performing the updates on each site.
-	*
 	* [--skip-backup]
 	* : Skip backup before performing the updates on each site.
 	*
-	* [--plugins]
-	* : A space separated list of specific wordpress plugins to update.
+	* [--name=<regex>]
+	* : Filter sites you can access via name.
+	*
+	* [--env=<env>]
+	* : Filter sites by environment.  Default is 'dev'.
 	*
 	* [--team]
 	* : Filter for sites you are a team member of.
 	*
+	* [--owner]
+    * : Filter for sites a specific user owns. Use "me" for your own user.
+    *
+    * [--org=<id>]
+    * : Filter sites you can access via the organization. Use 'all' to get all.
+    *
 	* [--config-file]
 	* : Path to the yml config file
-	*
-	* [--org=<id>]
-	* : Filter sites you can access via the organization. Use 'all' to get all.
-	*
-	* [--name=<regex>]
-	* : Filter sites you can access via name.
 	*
 	* @subcommand mass-wordpress-update
 	* @alias mwu
@@ -100,168 +98,68 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 	public function massWpUpdate( $args, $assoc_args ) {
 
 
-		/* 	Fetch arguments  */
-		$this->args = $args;
-		$this->assoc_args = $assoc_args;
+		// 	process and validate command arguments into settings
+		$this->process_arguments( 'start',  $args, $assoc_args );
 
 
-		/* 	Using custom config file for update  */
-		if ( count( $assoc_args ) === 1 && isset( $this->assoc_args['config-file'] ) ) {
-
-			$this->yaml_settings = $this->yamlParseFile( $this->assoc_args['config-file'] );
-
-		}
+		// 	build update queue
+		$this->create_queue();
 
 
-		/* 	Using default config file for update  */
-		if ( count( $this->assoc_args ) === 0 ) {
-
-			$default_config_file = dirname(__DIR__) . '/sites-config.yml';
-
-			$this->yaml_settings = $this->yamlParseFile( $default_config_file );
-
-		}
-
-
-		/* 	Using slack for notification  */
-		if ( isset( $this->yaml_settings['slack_settings'] ) ) {
-
-			$this->slack_settings = $this->yamlGetSlackSettings();
-
-		}
-
-
-		/* 	Fetch list of sites  */
-		$options = array();
-
-		if ( ! isset( $this->assoc_args['config-file'] ) ) {
-
-			$options = array(
-				'org_id'	=> $this->input()->optional(
-					array(
-						'choices'	=> $this->assoc_args,
-						'default'	=> null,
-						'key'		=> 'org',
-					)
-				),
-				'team_only'	=> isset( $this->assoc_args['team'] ),
-			);
-
-		}
-
-		$this->sites->fetch( $options );
-
-
-		/* 	Filter by name  */
-		if ( isset( $this->assoc_args['name'] ) ) {
-
-			$this->sites->filterByName( $this->assoc_args['name'] );
-
-		}
-
-
-		/* 	Filter specific sites by uuid 
-			NOTE: not working in version 0.13.2
-
-		if ( isset( $this->assoc_args['owner'] ) ) {
-
-			$owner_uuid = $this->assoc_args['owner'];
-
-			if ( $owner_uuid == 'me' ) {
-
-				$owner_uuid = $this->user->id;
-
-			}
-
-			$this->sites->filterByOwner($owner_uuid);
-
-		}
-		*/
-
-
-		/*	Check environment validity  */
-		$env = isset( $this->assoc_args['env'] ) ? $this->assoc_args['env'] : 'dev';
-
-		$valid_envs = array( 'dev', 'test', 'live' );
-
-		$valid_env = in_array( $env, $valid_envs );
-
-		if ( ! $valid_env ) {
-
-			foreach ( $sites as $site ) {
-
-				$environments = $site->environments->all();
-
-				foreach ($environments as $environment) {
-
-					$e = $environment->get('id');
-
-					if ( $e == $env ) {
-						$valid_env = true;
-						break;
-					}
-
-				}
-
-				if ( $valid_env ) {
-					break;
-				}
-			}
-		}
-
-
-		/*	Update fetched sites list  */
-		$sites = $this->sites->all();
-
-		if ( count( $sites ) == 0 ) {
+		// 	write queue summary
+		if ( count( $this->queue ) === 0 ) {
 
 			$this->failure( 'Given arguments failed to find any sites.' );
 
 		} else {
 
-			$sites_queue = array();
-			
-			foreach (  $sites as $site ) {
+			$queue_total = count( $this->queue );
 
-				$args = array(
-					'name'      => $site->get( 'name' ),
-					'env'       => $env,
-					'framework' => $site->get( 'framework' ),
-				);
+			$this->notice( "Updating $queue_total sites:" );
 
-				if ( $this->yaml_settings ) {
+			$i = 1;
 
-					$site_args = $this->yamlGetSiteArgs( $site->get( 'name' ) );
+			foreach ( $this->queue as $index => $queue ) {
 
-					if ( $site_args ) {
+				$this->notice( '=> ' . $queue['name'], false );
 
-						$args = array_merge( $args, $site_args );
-
-						$sites_queue[] = $args;
-
-					} else {
-
-						$this->log()->info( '{name} excluded from updates', array( 'name' => $site->get('name') ) );
-
-					}
-
-				} else {
-
-					$sites_queue[] = $args;
-
-				}
+				$i++;
 
 			}
 
-			if ( $sites_queue ) {
+		}
 
-				foreach ( $sites_queue as $site_args ) {
 
-					$this->plugins_update( $site_args, $assoc_args );
+		// 	process queue
+		new_line();
 
-				}
+		foreach ( $this->queue as $index => $queue ) {
+
+			$name = $queue['name'];
+
+			long_line();
+
+			$this->notice( '| ' . $queue['name'], false );
+
+			long_line();
+
+			$this->notice( "=> starting update." );
+
+			$report = $this->process_queue( $queue );
+
+			if ( isset( $this->settings['slack_settings'] ) && $report['report'] || $report['error'] ) {
+
+				$this->notice( "=> sending message to slack", false );
+
+				$this->send_to_slack( $queue, $report );
 
 			}
+
+			$this->notice( "=> finished updating.", false );
+
+			new_line();
+
+			new_line();
 
 		}
 
@@ -269,660 +167,146 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 	}
 
 
-	/**
-	* Perform the updates on a specific site and environment.
-	*
-	* @param array $update_args
-	*   The site environment arguments.
-	*/
-	private function plugins_update( $update_args, $assoc_args ) {
+	// 	Create update queue
+	public function create_queue() {
 
+		// 	exit if no sites found
+		if ( ! isset( $this->settings['sites']['update'] ) || count( $this->settings['sites']['update'] ) === 0 ) {
 
-		// 	Get update arguments
-		$name = $update_args['name'];
-		$environ = $update_args['env'];
-		$framework = $update_args['framework'];
-
-
-		// Get additional arguments
-		$report   = $this->isReport();
-		$confirm  = $this->getSetting( 'confirm', false );
-		$skip     = $this->getSetting( 'skip-backup', false );
-		$commit   = $this->getSetting( 'auto-commit', false );
-		$plugins  = $this->getSetting( 'plugins', '' );
-
-
-		// Get site yaml settings if exists
-		if ( $this->yaml_settings ) {
-
-			$site_yaml_settings = $this->yamlGetSiteArgs( $name );
-
-			if ( $site_yaml_settings ) {
-
-				$report   = $this->yamlGetSiteSetting( $name, 'report' );
-				$confirm  = $this->yamlGetSiteSetting( $name, 'confirm' );
-				$commit   = $this->yamlGetSiteSetting( $name, 'auto-commit' );
-				$skip     = $this->yamlGetSiteSetting( $name, 'skip-backup' );
-
-			}
+			$this->failure( 'Given arguments failed to find any sites.' );
 
 		}
 
+		// 	creating queue
+		$this->queue 	= array();
 
-		// 	Setup additional update variables
-		$all = $plugins ? '' : '--all';
-		$dry_run = $report ? '--dry-run' : '';
-		$update_report = array();
-		$unavailable_packages = array();
+		$sites 			= $this->settings['sites']['update'];
+
+		$settings 		= $this->settings['sites']['settings'];
+
+		$err_notify 	= ( isset( $this->settings['slack_settings']['err_notify'] ) ? $this->settings['slack_settings']['err_notify'] : false );
+
+		foreach ( $sites as $site ) {
+
+			$this->queue[] = array(
+				'name'			=> $site['name'],
+				'env'			=> ( isset( $site['env'] ) ? $site['env'] : $settings['env'] ),
+				'upstream'		=> ( isset( $site['upstream'] ) ? $site['upstream'] : $settings['upstream'] ),
+				'auto-commit'	=> ( isset( $site['auto-commit'] ) ? $site['auto-commit'] : $settings['auto-commit'] ),
+				'skip-backup'	=> ( isset( $site['skip-backup'] ) ? $site['skip-backup'] : $settings['skip-backup'] ),
+				'auto-deploy'	=> ( isset( $site['auto-deploy'] ) ? $site['auto-deploy'] : $settings['auto-deploy'] ),
+				'err_notify'	=> ( isset( $site['err_notify'] ) ? $site['err_notify'] : $err_notify ),
+			);
+
+		}
+
+	}
 
 
-		// Check for valid frameworks.
-		$valid_frameworks = array( 'wordpress' );
+	// 	Run update on queue
+	public function process_queue( $queue ) {
 
-		if ( ! in_array( $framework, $valid_frameworks ) ) {
 
-			$this->log()->error( '{framework} is not a valid framework.  WordPress updates aborted for {environ} environment of {name} site.', array(
-				'framework' => $framework,
-				'environ' => $environ,
-				'name' => $name,
-			) );
+		// 	Response
+		$response = array(
+			'member'	=> array(),
+			'message'	=> array(
+				'skip_backup'	=> false,
+				'upstream'		=> false,
+				'updates'		=> false,
+				'auto_commit'	=> false,
+				'auto_deploy'	=> array(),
+				'log'			=> array(),
+			),
+			'error'		=> false,
+			'report'	=> false,
+		);
+
+
+		// 	Create site object
+		$args = array(
+			'site'	=> $queue['name'],
+			'env'	=> $queue['env'],
+		);
+
+		// 	Check if site is available
+		try {
+			
+			$site = $this->sites->get( $this->input()->siteName( array(
+		    	'args' => $args
+		    ) ) );
+
+		} catch ( TerminusException $e ) {
+
+			$error_message = '=> invalid site id.';
+
+			$this->notice( $error_message, false );
 
 			return false;
+			
+		}
+
+	    $env  = $site->environments->get(
+			$this->input()->env( array( 'args' => $args, 'site' => $site ) )
+		);
+
+		
+		// 	Queue's Variables
+		$name 			= $site->get( 'name' );
+		$framework 		= $site->get( 'framework' );
+		$mode 			= $site->get( 'connection_mode' );
+		
+		$environ 		= $queue['env'];
+		$upstream		= $queue['upstream'];
+		$auto_commit	= $queue['auto-commit'];
+		$skip_backup	= $queue['skip-backup'];
+		$auto_deploy	= $queue['auto-deploy'];
+		$err_notify		= $queue['err_notify'];
+
+
+	    /*	Validations
+	    	- exit if site is not using wordpress
+	    	- exit if site is in SFTP and have pending changes
+
+	     */
+		if ( 'wordpress' != $framework ) {
+
+			$error_message = "=> not a valid WordPress environment.";
+
+			$response['message']['log'][] = $error_message;
+
+			$this->notice( $error_message );
+
+			return $response;
 
 		}
 
+		if ( 'sftp' == $this->connection_info( $name, $environ ) ) {
 
-		// 	Get current connection mode
-		$assoc_args = array(
-			'site' => $name,
-			'env'  => $environ,
-		);
+			$assoc_args = array(
+				'site' => $name,
+				'env'  => $environ,
+			);
 
-		$site = $this->sites->get(
-			$this->input()->siteName( array( 'args' => $assoc_args ) )
-		);
+			$site = $this->sites->get(
+				$this->input()->siteName( array( 'args' => $assoc_args ) )
+			);
 
-		$env  = $site->environments->get(
-			$this->input()->env( array( 'args' => $assoc_args, 'site' => $site ) )
-		);
-
-		$mode = $env->get( 'connection_mode' );
-
-
-		//	Get each environment url
-		$env_url = $this->getSiteEnvUrl( $site );
-
-
-		//	Get site info
-		$site_info = $site->serialize();
-
-
-		//	Check for pending changes in sftp mode.
-		if ( $mode == 'sftp' ) {
+			$env  = $site->environments->get(
+				$this->input()->env( array( 'args' => $assoc_args, 'site' => $site ) )
+			);
 
 			$diff = (array)$env->diffstat();
 
 			if ( ! empty( $diff ) ) {
 
-				$this->log()->error( 'Unable to update {environ} environment of {name} site due to pending changes.  Commit changes and try again.', array(
-					'environ' => $environ,
-					'name' => $name,
-				) );
+				$error_message = "unable to update $environ environment due to pending changes.  Commit changes and try again.";
 
-				return false;
+				$response['error'] = true;
 
-			}
+				$response['message']['log'][] = $error_message;
 
-		} else {
-
-			// Set connection mode to sftp.
-			$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
-
-		}
-
-
-		// Prompt to confirm updates.
-		if ( ! $report && $confirm ) {
-
-			$message = 'Apply plugins updates to %s environment of %s site ';
-
-			$confirmed = $this->input()->confirm( array(
-				'message' => $message,
-				'context' => array(
-					$environ,
-					$name,
-				),
-				'exit' => false,
-			) );
-
-			if ( ! $confirmed ) {
-				return true; // User says No.
-			}
-
-		}
-
-		if ( ! $report ) {
-
-			// Beginning message.
-			$this->log()->notice( 'Starting plugins updates for {environ} environment of {name} site.', array(
-				'environ' => $environ,
-				'name' => $name,
-			) );
-
-		}
-
-		$proceed = true;
-
-
-		//	Check for errors on site
-		if ( $this->checkIsSiteDown( $name, $environ ) ) {
-
-			$this->log()->error( 'Unable to update {environ} environment of {name} site due to fatal error on site.', array(
-				'environ' => $environ,
-				'name' => $name,
-			) );
-
-			$proceed = false;
-
-		}
-
-
-		// 	Doing site backup
-		if ( ! $skip && ! $report && $proceed ) {
-
-			$args = array(
-				'element' => 'all',
-			);
-
-			if ( $proceed = $env->backups->create( $args ) ) {
-
-				if ( is_string( $proceed ) ) {
-
-					$this->log()->info( $proceed );
-
-				} else {
-
-					$proceed->wait();
-
-					$this->workflowOutput($proceed);
-
-				}
-
-			} else {
-
-				$this->log()->error( 'Backup failed. Wordpress Plugins updates aborted for {environ} environment of {name} site.', array(
-					'environ' => $environ,
-					'name' => $name,
-				) );
-
-				return false;
-
-			}
-
-		}
-
-
-		//	Doing upstream-update
-		if ( $this->isUpstreamUpdate() || $this->yamlGetSiteSetting( $name, 'upstream' ) && $proceed ) {
-
-			// Set connection to git
-			$mode = $this->changeConnectionMode( $name, $environ, 'git' );
-
-			// Perform upstream update
-			$upstreamUpdate = $this->upstream_update( $name, 'dev' );
-
-			$proceed = $upstreamUpdate['state'];
-
-			$upstreamError = ( $proceed ? false : true );
-			
-			// Set connection to sftp
-			$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
-
-		}
-
-
-		//	Check for errors on site
-		if ( $proceed && $this->checkIsSiteDown( $name, $environ ) ) {
-
-			$this->log()->error( 'Unable to continue on updating {environ} environment of {name} site due to fatal error on site.', array(
-				'environ' => $environ,
-				'name' => $name,
-			) );
-
-			$proceed = false;
-
-		}
-
-
-		//	Perform wordpress updates via wp-cli.
-		if ( $proceed ) {
-
-
-			// 	Check plugin list
-			$pluginStatus = $this->getSitePluginStatus( $name, $environ );
-
-
-			//	Check for available update
-			$update_valid = false;
-
-			$unavailable_packages = array();
-
-			if ( $pluginStatus ) {
-
-				foreach ( $pluginStatus as $plugin ) {
-
-					if ( $plugin->version && $plugin->update_version && $plugin->update_package ) {
-
-						$update_valid = true;
-
-					}
-
-					if ( $plugin->version && $plugin->update_version && ! $plugin->update_package ) {
-
-						$unavailable_packages[] = $plugin->name;
-
-					}
-
-				}
-
-			}
-
-			//	Doing update.
-			if ( $update_valid ) {
-				
-				$wp_options = trim("plugin update $plugins $all $dry_run");
-
-				$tm_command_path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
-
-				$tm_command = "$tm_command_path wp --site=$name --env=$environ \"$wp_options\"";
-
-				$update_site_err = array(
-					'message' => 'Unable to perform plugins updates for {environ} environment of {name} site.',
-					'args'    => array(
-						'environ' => $environ,
-						'name'    => $name,
-					),
-				);
-
-				//	Set connection back to sftp.
-				$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
-
-				// 	Update all plugin on site
-				$update_site = $this->execute( $tm_command, false, true, $update_site_err );
-
-				$proceed = $update_site['state'];
-
-				$update_report = ( isset( $update_site['data'] ) ? $update_site['data'] : false );
-
-			} else {
-
-				$this->log()->notice( 'There are no available update found in {environ} environment of {name} site.', array(
-					'environ' => $environ,
-					'name' => $name,
-				) );
-
-			}
-
-			//	Reload the environment.
-			$env  = $site->environments->get(
-				$this->input()->env( array( 'args' => $assoc_args, 'site' => $site ) )
-			);
-
-		}
-
-
-		//	Check site health
-		$errEnvs = array();
-
-		$isError = ( isset( $isError ) ? $isError : false );
-
-		foreach ( $env_url as $env_name => $url ) {
-
-			$error = $this->checkIsSiteDown( $name, $env_name );
-
-			if ( $error ) {
-
-				$isError = true;
-
-			}
-
-			$errEnvs[$env_name] = $error;
-
-		}
-
-		if ( $isError ) {
-
-			$proceed = false;
-
-			foreach ( $errEnvs as $env_name => $value ) {
-
-				if ( $value ) {
-
-					$this->log()->notice( 'Fatal error found in {environ} environment of {name} site. Auto commit and deploy are not performed.', array(
-						'environ'	=> $env_name,
-						'name'		=> $name,
-					) );
-
-				}
-
-			}
-
-		}
-
-
-		//	Commit all changes
-		if ( ! $report && ! $isError && $commit && $proceed ) {
-
-
-			//	Set connection back to sftp.
-			$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
-
-			$message = 'Updates applied by Mass Wordpress Update terminus plugin.';
-
-
-			// 	Commit changes
-			if ( $workflow = $env->commitChanges( $message ) ) {
-
-				if ( is_string( $workflow ) ) {
-
-					$this->log()->info( $workflow );
-
-				} else {
-
-					$workflow->wait();
-
-					$this->workflowOutput( $workflow );
-				}
-
-			} else {
-
-				$this->log()->error(
-					'Unable to perform automatic update commit for the {environ} environment of {name} site.',
-					array( 'environ' => $environ, 'name' => $name )
-				);
-
-				return false;
-
-			}
-
-
-		}
-
-
-		//	Doing auto-deploy
-		if ( $proceed && ( $this->isAutoDeploy() || $this->yamlGetSiteSetting( $name, 'auto-deploy' ) ) ) {
-
-			// Set connection back to sftp.
-			$mode = $this->changeConnectionMode( $name, $environ, 'sftp' );
-
-			$autoDeployTest = $this->auto_deploy( $name, 'test' );
-
-			$autoDeployLive = $this->auto_deploy( $name, 'live' );
-
-		}
-
-
-		//	Completion message.
-		if ( ! $report && ! $isError ) {
-
-			$this->log()->notice( 'Finished plugins updates for {environ} environment of {name} site.', array(
-				'environ' => $environ,
-				'name' => $name,
-			) );
-
-		}
-
-
-		// 	Set site connection mode back to git
-		if ( ! $report && ! $isError ) {
-
-			$mode = $this->changeConnectionMode( $name, $environ, 'git' );
-
-		}
-
-
-		//	Send slack message
-		if ( isset( $this->yaml_settings['slack_settings'] ) ) {
-
-			$date = new \DateTime();
-
-			$slack_notif_text = "";
-
-			$slack_notif_text .= "*Terminus update report on " . $name . "*\n\n";
-
-			$update_report = $this->getUpdateNotes( $update_report );
-
-			$team_member = $this->getSlackTeamMember( $name );
-
-			if ( $isError ) {
-
-				$slack_notif_text .= 'Fatal error found on following environments.' . "\n";
-
-				$slack_notif_text .= "```";
-
-				foreach ( $errEnvs as $errEnvName => $errEnvStatus ) {
-
-					if ( $errEnvStatus ) {
-
-						$slack_notif_text .= $errEnvName . "\n";
-
-					}
-
-				}
-
-				$slack_notif_text .= "```" . "\n";
-
-			}
-
-			if ( $update_report ) {
-
-				$slack_notif_text .= "```";
-
-				foreach ( $update_report as $report ) {
-
-					$slack_notif_text .= $report . "\n";
-
-				}
-
-				$slack_notif_text .= "```" . "\n";
-
-			} else {
-
-				$slack_notif_text .= 'No plugin update performed.' . "\n";
-
-			}
-			
-			if ( $unavailable_packages ) {
-
-				$slack_notif_text .= 'Unavailable plugin update found.' . "\n";
-
-				$slack_notif_text .= "```";
-
-				foreach ( $unavailable_packages as $unavailable_package ) {
-
-					$slack_notif_text .= '- ' . $unavailable_package . "\n";
-
-				}
-
-				$slack_notif_text .= "```" . "\n";
-
-			}
-
-			if ( isset( $upstreamError ) && $upstreamError ) {
-
-				$slack_notif_text .= 'Upstream update failed.' . "\n";
-
-			}
-
-			$payload = array(
-				'username'		=> $this->slack_settings['username'],
-				'channel'		=> $this->slack_settings['channel'],
-				'icon_emoji'	=> $this->slack_settings['icon_emoji'],
-				'text'			=> $slack_notif_text,
-				'mrkdwn'		=> true,
-				'attachments'	=> array( array(
-					'fallback'		=> 'Terminus MWU message.',
-					'color'			=> '#ffb305',
-					'author_name'	=> 'Terminus MWU',
-					'fields'		=> array(
-						array(
-							'title'		=> 'Dashboard',
-							'value'		=> "<https://dashboard.pantheon.io/sites/". $site_info['id'] . "|dashboard.pantheon.io>",
-							'short'		=> true
-						),
-						array(
-							'title'		=> 'Dev',
-							'value'		=> ( isset( $env_url['dev'] ) ? $env_url['dev'] : 'no link provided.' ),
-							'short'		=> true
-						),
-						array(
-							'title'		=> 'Test',
-							'value'		=> ( isset( $env_url['test'] ) ? $env_url['test'] : 'no link provided.' ),
-							'short'		=> true
-						),
-						array(
-							'title'		=> 'Live',
-							'value'		=> ( isset( $env_url['live'] ) ? $env_url['live'] : 'no link provided.' ),
-							'short'		=> true
-						),
-					),
-					'image_url'		=> 'http://my-website.com/path/to/image.jpg',
-					'thumb_url'		=> 'http://example.com/path/to/thumb.png',
-					'footer'		=> 'Updates performed in: ',
-					'footer_icon'	=> 'https://platform.slack-edge.com/img/default_application_icon.png',
-					'ts'			=> $date->getTimestamp()
-				) ),
-			);
-
-			$slack = simple_slack( $this->slack_settings['url'], $payload );
-
-
-			if ( $update_report ) {
-
-				$result = $slack->send();
-
-			}
-
-
-			// 	Send message to configured team member
-			if ( $unavailable_packages && $team_member || $isError || $upstreamError ) {
-
-				foreach ( $team_member as $member ) {
-
-					$memberChannel = "@$member";
-
-					$payload['channel'] = "@$member";
-
-					$slack = simple_slack( $this->slack_settings['url'], $payload );
-
-					$result = $slack->send();
-
-				}
-
-			}
-
-
-		}
-
-
-	}
-
-
-	/**
-	* Perform upstream updates on site.
-	*
-	* @param string $command
-	*   The name of the target site
-	* @param array || boolean : $onStart ( 'message' => string, $args => array() )
-	*   Message before execution
-	* @param array || boolean : $onSuccess ( 'message' => string, $args => array() )
-	*   Message if execution suceeded
-	* @param array || boolean : $onError ( 'message' => string, $args => array() )
-	*   Message if execution failed
-	*/
-	private function execute( $command, $onStart = false, $onSuccess = false, $onError = false ) {
-
-		// Value to return
-		$response = array(
-			'state' => true,
-			'data'  => false,
-		);
-
-		// Notice before executing something
-		if ( $onStart ) {
-
-			$message = 'Starting command "{command}".';
-
-			$messageArgs = array(
-				'command'     => $command,
-			);
-
-			if ( ! is_bool( $onStart ) && $onStart ) {
-
-				$message = ( isset( $onStart['message'] ) ? $onStart['message'] : $message );
-
-				$messageArgs = ( isset( $onStart['args'] ) ? $onStart['args'] : $messageArgs );
-
-			}
-
-			$this->log()->notice( $message, $messageArgs );
-
-		}
-
-
-		// Execute commands
-		$exec = exec( $command, $update_array, $update_error );
-
-
-		// Error or something happened
-		if ( $onError && $update_error ) {
-
-			$message = 'Command have error result: {error}".';
-
-			$messageArgs = array(
-			'error'	=> ( is_array( $update_error ) ? implode( "\n", $update_error ) : $update_error ),
-			);
-
-			if ( ! is_bool( $onError ) && $onError ) {
-
-				$message = ( isset( $onError['message'] ) ? $onError['message'] : $message );
-
-				$messageArgs = ( isset( $onError['args'] ) ? $onError['args'] : $messageArgs );
-
-			}
-
-			$this->log()->error( $message, $messageArgs );
-
-			$response['state'] = false;
-
-			$response['data'] = $update_error;
-
-			$response['error'] = $update_error;
-
-		}
-
-		// Display output of update results.
-		if ( $onSuccess && $update_array ) {
-
-			$message = implode( "\n", $update_array );
-
-			$messageArgs = array();
-
-			if ( ! empty( $update_array ) ) {
-
-				if ( ! is_bool( $onSuccess ) && $onSuccess ) {
-
-					$message = ( isset( $onSuccess['message'] ) ? $onSuccess['message'] : $message );
-
-					$messageArgs = ( isset( $onSuccess['args'] ) ? $onSuccess['args'] : $messageArgs );
-
-				}
-
-				$this->log()->notice( $message, $messageArgs );
-
-				$response['state'] = true;
-
-				$response['data'] = $update_array;
+				$this->notice( '=> ' . $error_message, false );
 
 				return $response;
 
@@ -930,405 +314,915 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 		}
 
+
+		// 	backup
+		if ( $skip_backup ) {
+
+			$this->notice( "=> skipped backup.", false );
+
+		} else {
+
+			$this->notice( "=> creating backup ", false, false );
+
+			$backup_response = $this->create_backup( $name, $environ );
+
+			$response['message']['skip_backup'] = $this->process_response( 'create_backup', $backup_response );
+			
+			$this->notice( "=> " . $response['message']['skip_backup'], false );
+
+		}
+
+		// 	upstream update
+		if ( $upstream ) {
+
+			if ( 'dev' != $environ ) {
+
+				$this->notice( "=> cannot apply upstream on non dev environment.", false );
+
+			} else {
+
+				// 	check for available upstream.
+				$this->notice( "=> checking for available updates.", false );
+
+				$available_update = $this->check_upstream( $name );
+
+				if ( $available_update ) {
+
+					$this->notice( "=> upstream update available, beginning update ", false, false );
+
+					$mode = $this->connection_info( $name, $environ );
+
+					//	change connection mode
+					if ( 'sftp' == $mode ) {
+
+						$this->change_connection( $name, $environ, 'git' );
+
+					}
+
+					// 	apply upstream
+					$this->notice( "=> applying upstream update ", true, false );
+
+					$upstream_response = $this->apply_upstream( $name );
+
+					$response['report'] = true;
+
+					$response['message']['upstream'] = $this->process_response( 'upstream', $upstream_response );
+					
+					$this->notice( "=> " . $response['message']['upstream'], false );
+
+					// 	check error
+					$this->notice( "=> checking for error after upstream updates", false, false );
+
+					$update_error = $this->site_error( $name, 'dev' );
+
+					if ( $update_error ) {
+
+						$upstream_error_message = 'error found on site after applying upstream updates.';
+
+						$response['error'] = true;
+
+						$response['message']['log'][] = $upstream_error_message;
+
+						$this->notice( "=> $upstream_error_message" );
+
+						return $response;
+
+					} else {
+
+						$this->notice( "=> no error found after upstream updates.", true, false );
+
+					}
+
+				} else {
+
+					$unavailable_message = 'no available upstream updates found.';
+
+					$response['message']['upstream'] = $unavailable_message;
+
+					$this->notice( "=> $unavailable_message", false );
+
+				}
+
+			}
+
+		} else {
+
+			$this->notice( "=> skipped applying upstream.", false );
+
+		}
+
+		// 	plugin update
+		if ( ! $response['error'] ) {
+
+			// 	check for error
+			if ( ! $upstream || ! $response['error'] ) {
+
+				$this->notice( "=> checking site health for plugins update", false );
+
+				$site_error = $this->site_error( $name, 'dev' );
+
+				if ( $site_error ) {
+
+					$site_error_message = 'error found when checking for plugin list.';
+
+					$response['error'] = true;
+
+					$response['message']['log'][] = $site_error_message;
+
+					$this->notice( "=> $site_error_message" );
+
+					return $response;
+
+				}
+
+			}
+
+			$available_update = array();
+
+			$this->notice( "=> checking plugin list", false );
+
+			$plugin_list = $this->get_plugin_list( $name, $environ );
+
+			if ( $plugin_list ) {
+
+				foreach ( $plugin_list as $plugin ) {
+
+					if ( 'available' == $plugin->update ) {
+
+						$available_update[] = $plugin->name;
+
+					}
+
+				}
+
+				if ( $available_update ) {
+
+					$this->notice( "=> avaliable plugins for update [" . implode( ', ', $available_update ) . ']', false );
+					
+					if ( 'git' == $this->connection_info( $name, $environ ) ) {
+
+						$this->notice( "=> changing connection mode to sftp ", false, false );
+
+						$this->change_connection( $name, $environ, 'sftp' );
+
+					}
+
+					$this->notice( "=> updating plugins ", false, false );
+
+					$plugins_update = $this->update_plugins( $name, $environ );
+
+					$response['report'] = true;
+
+					$response['message']['updates'] = $this->process_response( 'updates', $plugins_update );
+					
+					$this->notice( "=> " . $response['message']['updates'], true );
+
+				}
+
+			} else {
+
+				$this->notice( "=> plugins not found.", false );
+
+			}
+
+			if ( $response['message']['updates'] ) {
+
+				// 	check error
+				$this->notice( "=> checking for error after plugins update", false, false );
+
+				$update_error = $this->site_error( $name, 'dev' );
+
+				if ( $update_error ) {
+
+					$plugin_error_message = 'error found on site after plugins update.';
+
+					$response['error'] = true;
+
+					$response['message']['log'][] = $plugin_error_message;
+
+					$this->notice( "=> $plugin_error_message" );
+
+					return $response;
+
+				} else {
+
+					$this->notice( "=> no error found after plugins update.", true, false );
+
+					$this->notice( "=> commiting changes on site ", true, false );
+
+					$commit_message = 'Updates applied by Mass Wordpress Update terminus plugin.';
+
+					$commit = $this->commit( $name, $environ, $commit_message );
+
+					$response['message']['auto_commit'] = $this->process_response( 'auto_commit', $commit );
+					
+					$this->notice( "=> " . $response['message']['auto_commit'], false );
+
+				}
+
+			}
+
+		}
+
+		// 	deploy to test and live
+		if ( $auto_deploy && 'dev' == $environ &&  ! $response['error'] ) {
+
+			// 	check for error
+			if ( ! $upstream && ! $response['message']['updates'] ) {
+
+				$this->notice( "=> checking site health for deployment.", false );
+
+				$site_error = $this->site_error( $name, 'dev' );
+
+				if ( $site_error ) {
+
+					$site_error_message = 'fatal error found on site, deploying aborted.';
+
+					$response['error'] = true;
+
+					$response['message']['log'][] = $site_error_message;
+
+					$this->notice( "=> $site_error_message" );
+
+					return $response;
+
+				}
+
+			}
+
+
+			// 	Deploy to test
+			$this->notice( "=> deploying to test ", false, false );
+
+			$deploy_test = $this->deploy( $name, 'test', 'Deployed files from dev to test' );
+
+			if ( is_null( $deploy_test['data'] ) ) {
+
+				$response['message']['auto_deploy']['test'] = $deploy_test['message'];
+
+			} else {
+
+				$response['report'] = true;
+
+				$response['message']['auto_deploy']['test'] = $this->process_response( 'auto_deploy', $deploy_test );
+
+			}
+					
+			$this->notice( "=> " . $response['message']['auto_deploy']['test'], false );
+
+
+			//	check for error on test after deploy
+			$this->notice( "=> checking test environment health ", false, false );
+
+			$site_error = $this->site_error( $name, 'test' );
+
+			if ( $site_error ) {
+
+				$site_error_message = 'fatal error found after deploying to test.';
+
+				$response['error'] = true;
+
+				$response['message']['auto_deploy']['test'] = $site_error_message;
+
+				$response['message']['auto_deploy']['live'] = 'live environment deployment aborted.';
+
+				$this->notice( "=> $site_error_message" );
+
+				return $response;
+
+			}
+
+
+			// 	Deploy to live
+			$this->notice( "=> deploying to live ", false, false );
+
+			$deploy_live = $this->deploy( $name, 'live', 'Deployed files from test to live' );
+
+			if ( is_null( $deploy_live['data'] ) ) {
+
+				$response['message']['auto_deploy']['live'] = $deploy_live['message'];
+
+			} else {
+
+				$response['report'] = true;
+
+				$response['message']['auto_deploy']['live'] = $this->process_response( 'auto_deploy', $deploy_live );
+
+			}
+
+			$this->notice( "=> " . $response['message']['auto_deploy']['live'], false );
+
+
+			//	check for error on live after deploy
+			$this->notice( "=> checking live environment health ", false, false );
+
+			$site_error = $this->site_error( $name, 'live' );
+
+			if ( $site_error ) {
+
+				$site_error_message = 'fatal error found after deploying to live.';
+
+				$response['error'] = true;
+
+				$response['message']['auto_deploy']['live'] = $site_error_message;
+
+				$this->notice( "=> $site_error_message" );
+
+				return $response;
+
+			}
+
+
+		}
+
+		// 	change back to git mode
+		if ( 'sftp' == $this->connection_info( $name, $environ ) && ! $response['error']) {
+
+			$this->notice( "=> changing connection mode to git ", false );
+
+			$this->change_connection( $name, $environ, 'sftp' );
+
+		}
+
+
+		// 	return report
+		return $response;
+
+
+	}
+
+
+	// 	Process response to output message
+	public function process_response( $action, $args ) {
+
+		$response = false;
+
+		switch ( $action ) {
+
+			case 'create_backup':
+
+				$response = ( $args['success'] ? 'suceeded in creating backup.' : 'failed to create backup.' );
+
+				break;
+
+			case 'upstream':
+
+				$response = ( $args['success'] ? 'applied upstream updates.' : 'failed to apply upstream updates.' );
+
+				break;
+
+			case 'updates':
+
+				if ( $args ) {
+
+					$updated = array();
+
+					foreach ( $args as $plugin ) {
+
+						$updated[$plugin->name] = $plugin->new_version;
+
+					}
+
+					$response = 'plugins updated:' . "\n";
+
+					foreach ( $updated as $plugin_name => $plugin_version ) {
+
+						$plugin_version = format_version( $plugin_version );
+
+						$response .= "   [	$plugin_version	]	$plugin_name";
+
+						$response .=  "\n";
+
+					}
+
+				}
+
+				break;
+
+			case 'auto_commit':
+
+				$response = ( $args['success'] ? 'changes commited.' : 'failed to commit changes.' );
+
+				break;
+			
+			case 'auto_deploy':
+
+				if ( ! $args['success'] && $args['data'] ) {
+
+					$response = ( $args['message'] ? $args['message'] : 'failed to deploy to ' . $args['data'] );
+
+				} else {
+
+					$response = $args['message'];
+
+				}
+
+				break;
+
+			case 'report':
+
+				$response .=  "\n";
+
+				$response .=  '```';
+
+				if ( $args['message']['skip_backup'] ) {
+
+					$response .= '=> ' . ucfirst( $args['message']['skip_backup'] );
+
+					$response .=  "\n";
+
+				}
+
+				if ( $args['message']['upstream'] ) {
+
+					$response .= '=> ' . ucfirst( $args['message']['upstream'] );
+
+					$response .=  "\n";
+					
+				}
+
+				if ( $args['message']['updates'] ) {
+
+					$response .= '=> ' . ucfirst( $args['message']['updates'] );
+
+					$response .=  "\n";
+
+				}
+
+				if ( $args['message']['auto_commit'] ) {
+
+					$response .= '=> ' . ucfirst( $args['message']['auto_commit'] );
+
+					$response .=  "\n";
+
+				}
+
+				if ( $args['message']['auto_deploy'] ) {
+
+					$response .= '=> ' . ucfirst( $args['message']['auto_deploy']['test'] );
+
+					$response .=  "\n";
+
+					$response .= '=> ' . ucfirst( $args['message']['auto_deploy']['live'] );
+
+					$response .=  "\n";
+
+				}
+
+				if ( $args['message']['log'] ) {
+
+					foreach ( $args['message']['log'] as $log ) {
+
+						$response .= '=> ' . ucfirst( $log );
+
+						$response .=  "\n";
+
+					}
+
+				}
+
+				$response .=  '```';
+
+				break;
+			
+		}
+
 		return $response;
 
 	}
 
 
-	/**
-	* Perform upstream updates on site.
-	*
-	* @param string $siteName
-	*   The name of the target site
-	* @param string $toEnv
-	*   Target site environment to deploy to
-	* @param string $apply
-	*   Apply upstream if true, inspect if false
-	* @param array $args
-	*   Additional arguments ( accept-upstream : bool, updatedb : bool )
-	*/
-	private function upstream_update( $siteName, $environ ) {
+	// 	Process and validate arguments
+	public function process_arguments( $action,  $args = false, $assoc_args = false ) {
 
+
+		$valid = true;
+
+
+		switch ( $action ) {
+
+
+			case 'start':
+
+
+				/* 	Checking $args and $assoc_args
+					- can't use anymore positional args
+					- can't use config file if other arguments are used
+
+				 */
+				if ( $args ) return false;
+				
+				if ( count( $assoc_args ) != 1 && isset( $assoc_args['config-file'] ) ) return false;
+
+
+				/* 	Build target site list adn options
+					- use config file when no other arguments given
+					- when command don't have any argument, use default config file
+					- when command have target site arguments
+
+				 */
+				if ( count( $assoc_args ) === 1 && isset( $assoc_args['config-file'] ) ) {
+
+					$config_file = $assoc_args['config-file'];
+
+					if ( ! file_exists( $config_file ) ) {
+
+						$this->failure( 'File ' . $config_file . ' does not exists.' );
+
+						return false;
+
+					}
+
+					$this->settings = spyc_load_file( $config_file );
+
+				}
+
+				if ( count( $assoc_args ) === 0 ) {
+
+					$default_config_file = dirname( __DIR__ ) . '/sites-config.yml';
+
+					if ( ! file_exists( $default_config_file ) ) {
+
+						$this->failure( 'File ' . $default_config_file . ' does not exists.' );
+
+						return false;
+
+					}
+
+					$this->settings = spyc_load_file( $default_config_file );
+
+				}
+
+				if ( count( $assoc_args ) > 0 && ! isset( $assoc_args['config-file'] ) ) {
+
+					// 	Build settings
+					$this->settings['sites'] = array(
+						'settings'	=> array(
+							'env'			=> ( isset( $assoc_args['env'] ) ? $assoc_args['env'] : 'dev' ),
+							'upstream'		=> ( isset( $assoc_args['upstream'] ) ? true : false ),
+							'auto-commit'	=> ( isset( $assoc_args['auto-commit'] ) ? true : false ),
+							'skip-backup'	=> ( isset( $assoc_args['skip-backup'] ) ? false : true ),
+							'auto-deploy'	=> ( isset( $assoc_args['auto-deploy'] ) ? true : false ),
+						),
+						'update'	=> array(),
+					);
+
+					// 	Get sites
+					$options = array(
+						'org_id'    => $this->input()->optional( array(
+							'choices' => $assoc_args,
+							'default' => null,
+							'key'     => 'org',
+						) ),
+						'team_only' => isset( $assoc_args['team'] ),
+					);
+
+					$this->sites->fetch( $options );
+
+					if ( isset( $assoc_args['name'] ) ) {
+
+						$this->sites->filterByName( $assoc_args['name'] );
+
+					}
+
+					if ( isset( $assoc_args['owner'] ) ) {
+
+						$owner_uuid = $assoc_args['owner'];
+
+						if ($owner_uuid == 'me') {
+
+							$owner_uuid = $this->user->id;
+
+						}
+
+						$this->sites->filterByOwner( $owner_uuid );
+
+					}
+
+					$sites = $this->sites->all();
+
+    				foreach ( $sites as $site ) {
+
+      					$name = $site->get('name');
+
+      					$this->settings['sites']['update'][] = array(
+      						'name'	=> $name,
+      					);
+
+					}
+
+				}
+
+
+				/* 	Use assoc_args  */
+				$this->assoc_args = $assoc_args;
+
+
+				break;
+
+
+		}
+
+
+		return $valid;
+
+
+	}
+
+
+	// 	Check a site env connection mode
+	private function connection_info( $site_name, $site_env ) {
+
+		$site = new \modSiteCommand( array( 'runner' => new \Terminus\Runner() ) );
+
+		$info = $site->connectionInfo( array(), array(
+			'site'	=> $site_name,
+			'env'	=> $site_env,
+		) );
+
+		return $info['connection_mode'];
+
+	}
+
+	
+	// 	Change a site env connection mode
+	private function change_connection( $site_name, $site_env, $mode ) {
+
+		$site = new \modSiteCommand( array( 'runner' => new \Terminus\Runner() ) );
+
+		return $site->setConnectionMode( array(), array(
+			'site'	=> $site_name,
+			'env'	=> $site_env,
+			'mode'	=> $mode,
+		) );
+
+	}
+
+
+	// 	Create backup for a site
+	private function create_backup( $site_name, $site_env ) {
+
+		$site = new \modSiteCommand( array( 'runner' => new \Terminus\Runner() ) );
+
+		return $site->create_backup( array( 'create' ), array(
+			'site'	=> $site_name,
+			'env'	=> $site_env,
+		) );
+
+	}
+
+
+	// 	Check for upstream availability
+	private function check_upstream( $site_name ) {
+
+		$available = false;
+
+		$site = new \modSiteCommand( array( 'runner' => new \Terminus\Runner() ) );
+
+		$info = $site->upstreamInfo( array(), array(
+			'site'	=> $site_name,
+		) );
+
+		if ( 'outdated' == $info['status'] ) {
+
+			$available = true;
+
+		}
+
+		return $available;
+
+	}
+
+	
+	// 	Check for upstream availability
+	private function apply_upstream( $site_name ) {
+
+		$site = new \modSiteCommand( array( 'runner' => new \Terminus\Runner() ) );
+
+		$info = $site->upstream_update( $site_name );
+
+		return $info;
+
+	}
+
+
+	// 	Call wp-cli command
+	private function wp_cli( $site_name, $site_env, $args ) {
+
+		$wpCommand = new \modWpCommand( array( 'runner' => new \Terminus\Runner() ) );
+
+		$info = $wpCommand->__invoke( $args, array(
+			'site'	=> $site_name,
+			'env'	=> $site_env,
+		) );
+
+		return $info;
+
+	}
+
+
+	// 	Check site plugin list
+	private function get_plugin_list( $site_name, $site_env ) {
+
+		$response = false;
+
+		$args = array(
+			'plugin list --format=json',
+		);
+
+		$info = $this->wp_cli( $site_name, $site_env, $args );
+
+		if ( isset( $info['output'] ) ) {
+
+			$response = json_decode( $info['output'] );
+
+		}
+
+		return $response;
+
+	}
+
+
+	// 	Check for errors on site
+	private function site_error( $site_name, $site_env ) {
+
+		$response = false;
+
+		$args = array(
+			'plugin status',
+		);
+
+		$info = $this->wp_cli( $site_name, $site_env, $args );
+
+		if ( isset( $info['exit_code'] ) && $info['exit_code'] == 255 || $info['exit_code'] == 1 ) {
+
+			return true;
+
+		}
+
+		return $response;
+
+	}
+
+
+	// 	Update all plugins
+	private function update_plugins( $site_name, $site_env ) {
+
+		$response = false;
+
+		$args = array(
+			'plugin update --all --format=json',
+		);
+
+		$info = $this->wp_cli( $site_name, $site_env, $args );
+
+		if ( isset( $info['output'] ) ) {
+
+			$response = json_decode( $info['output'] );
+
+		}
+
+		return $response;
+
+	}
+
+
+	// 	Commit all changes
+	private function commit( $site_name, $site_env, $message ) {
+
+		$site = new \modSiteCommand( array( 'runner' => new \Terminus\Runner() ) );
+
+		$info = $site->code( array( 'commit' ), array(
+			'site'		=> $site_name,
+			'env'		=> $site_env,
+			'message'	=> $message,
+		) );
+
+		return $info;
+
+	}
+
+
+	// 	Deploy
+	private function deploy( $site_name, $site_env, $message ) {
+
+		$site = new \modSiteCommand( array( 'runner' => new \Terminus\Runner() ) );
+
+		$info = $site->deploy( array(), array(
+			'site'		=> $site_name,
+			'env'		=> $site_env,
+			'cc'		=> true,
+			'note'		=> $message,
+		) );
+
+		return $info;
+
+	}
+
+
+	// 	Send report message to slack
+	public function send_to_slack( $queue, $report ) {
+
+
+		$name = $queue['name'];
+		
+		$message = $this->process_response( 'report', $report );
+			
+
+		// 	exit if no message given
+		if ( ! $message ) return;
+
+
+		// 	setting up info
 		$assoc_args = array(
-			'site' 				=> $siteName,
-			'env'  				=> $environ,
-			'updatedb'			=> true,
-			'accept-upstream'	=> true,
+			'site' => $name,
 		);
 
 		$site = $this->sites->get(
 			$this->input()->siteName( array( 'args' => $assoc_args ) )
 		);
 
-		$response = array(
-			'state'		=> false,
-			'updates'	=> false,
+		$env_url = $this->getSiteEnvUrl( $site );
+
+		$site_info = $site->serialize();
+
+		$date = new \DateTime();
+
+
+		// 	modify message
+		$message 	= "*Terminus update report on " . $name . "*\n\n" . $message;
+		$color 		= ( $report['error'] ? '#dd0d0d' : '#2f2cba' );
+
+
+		// 	send message
+		$payload = array(
+			'username'		=> $this->settings['slack_settings']['username'],
+			'channel'		=> $this->settings['slack_settings']['channel'],
+			'icon_emoji'	=> ':' . $this->settings['slack_settings']['icon_emoji'] . ':',
+			'text'			=> $message,
+			'mrkdwn'		=> true,
+			'attachments'	=> array( array(
+				'fallback'		=> 'Terminus MWU message.',
+				'color'			=> $color,
+				'author_name'	=> $name,
+				'fields'		=> array(
+					array(
+						'title'		=> 'Dashboard',
+						'value'		=> "<https://dashboard.pantheon.io/sites/". $site_info['id'] . "|dashboard.pantheon.io>",
+						'short'		=> true
+					),
+					array(
+						'title'		=> 'Dev',
+						'value'		=> ( isset( $env_url['dev'] ) ? $env_url['dev'] : 'no link provided.' ),
+						'short'		=> true
+					),
+					array(
+						'title'		=> 'Test',
+						'value'		=> ( isset( $env_url['test'] ) ? $env_url['test'] : 'no link provided.' ),
+						'short'		=> true
+					),
+					array(
+						'title'		=> 'Live',
+						'value'		=> ( isset( $env_url['live'] ) ? $env_url['live'] : 'no link provided.' ),
+						'short'		=> true
+					),
+				),
+				'footer'		=> 'Updates performed in: ',
+				'footer_icon'	=> 'https://platform.slack-edge.com/img/default_application_icon.png',
+				'ts'			=> $date->getTimestamp()
+			) ),
 		);
 
-		$upstream_updates = $site->upstream->getUpdates();
+		$slack = simple_slack( $this->settings['slack_settings']['url'], $payload );
 
-		if ( isset( $upstream_updates->remote_url ) && isset( $upstream_updates->behind ) ) {
+		$result = $slack->send();
 
-			if (!isset($upstream_updates) || empty((array)$upstream_updates->update_log)) {
-				
-                $this->log()->info('No updates to apply.');
-                
-                $response['state'] = true;
-                
-                return $response;
-                
-            }
-
-		} else {
-
-			$this->failure( 'There was a problem checking your upstream status. Please try again.' );
-
-		}
-
-		if ( ! empty( $upstream_updates->update_log ) ) {
-
-			$env = $site->environments->get(
-				$this->input()->env(['args' => $assoc_args, 'site' => $siteName,])
-			);
-
-			if ( in_array( $env->id, ['test', 'live',] ) ) {
-
-				$this->failure( 'Upstream updates cannot be applied to the {env} environment',
-					array( 'env' => $env->id )
-				);
-
-			}
-
-			$updatedb = ( isset( $assoc_args['updatedb'] ) && $assoc_args['updatedb'] );
-
-			$acceptupstream = ( isset( $assoc_args['accept-upstream'] ) && $assoc_args['accept-upstream'] );
-
-			$workflow = $env->applyUpstreamUpdates( $updatedb, $acceptupstream );
-
-			while ( ! $workflow->isFinished() ) {
-
-				$workflow->fetch();
-
-				sleep(3);
-
-				fwrite( STDERR, '.' );
-
-			}
-
-			echo "\n";
-
-			if ( $workflow->isSuccessful() ) {
-
-				$response['state'] = true;
-
-				$response['updates'] = $upstream_updates->update_log;
-
-			} else {
-
-				$response['state'] = false;
-
-				$response['updates'] = '';
-
-				$final_task = $workflow->get('final_task');
-
-				if ( ( $final_task != null ) && ! empty( $final_task->messages ) ) {
-
-					foreach ( $final_task->messages as $data => $message ) {
-
-						$response['updates'] .= $message->message . "\n";
-
-					}
-
-				}
-
-			}
-
-			$this->workflowOutput( $workflow );
-
-		} else {
-
-			$this->log()->warning('There are no upstream updates to apply.');
-
-		}
-
-		return $response;
-
-	}
-
-
-	/**
-	* Perform the updates on a specific site and environment.
-	*
-	* @param string $siteName
-	*   The name of the target site
-	* @param string $toEnv
-	*   Target site environment to deploy to
-	* @param array $args
-	*   Additional arguments ( cc : bool, updatedb : bool, note: string )
-	*/
-	private function auto_deploy( $siteName, $toEnv, $args = array() ) {
-
-		$fromEnv = ( $toEnv === 'live' ? 'test' : 'dev' );
-
-		$path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
-
-		$command =  $path . ' site deploy';
-
-		$command .= ' --site=' . $siteName;
-
-		$command .= ' --env=' . $toEnv;
-
-		$default_args = array(
-			'cc'        => true,
-			'note'      => 'Deployed files from '. $fromEnv .' to '. $toEnv .'.',
-		);
-
-		$err = array(
-			'message' => 'Unable to perform auto-deploy from {fromEnv} to {toEnv} environment of site: {siteName} .',
-			'args'    => array(
-				'fromEnv'     => $fromEnv,
-				'toEnv'       => $toEnv,
-				'siteName'    => $siteName,
-			),
-		);
-
-		$args = array_merge( $default_args, $args );
-
-		if ( $args ) {
-
-			foreach ( $args as $key => $value ) {
-
-				switch ( $key ) {
-
-					case 'cc':
-						$command .= ( $value ? ' --cc' : '' );
-					break;
-
-					case 'note':
-						$command .= ( $value ? ' --note="' . $value . '"': '' );
-					break;
-
-				}
-
-			}
-
-		}
-
-		$auto_deploy = $this->execute( $command, true, true, $err );
-
-		return $auto_deploy;
-
-	}
-
-
-	/**
-	* Change a site's connection mode
-	* @param $name 	: name of the site
-	* @param $env  	: target environment of the site
-	* @param $mode  : target connection mode
-	*/
-	private function changeConnectionMode( $name, $env, $mode ) {
-
-		$path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
-
-		exec( $path .  " site set-connection-mode --site=$name --env=$env --mode=$mode" );
 		
-		return $mode;
+		// 	Send to slack team member
+		$team_member = ( isset( $queue['err_notify'] ) ? $queue['err_notify'] : false );
 
-	}
+		if ( $team_member && $report['error'] ) {
 
+			foreach ( $team_member as $member ) {
 
-	/**
-	* Get yaml file from specified file location.
-	*
-	* @param string $dir
-	*   File location of yaml config file.
-	*/
-	private function yamlParseFile( $dir ){
+				$memberChannel = "@$member";
 
-		if ( ! file_exists( $dir ) ) {
+				$payload['channel'] = "@$member";
 
-			$this->failure( 'File ' . $dir . ' does not exists.' );
+				$slack = simple_slack( $this->settings['slack_settings']['url'], $payload );
 
-			return false;
-
-		}
-
-		require_once 'lib/Spyc.php';
-
-		$yaml_settings = spyc_load_file( $dir );
-
-		$yaml_settings = $this->yamlValidateSettings( $yaml_settings );
-
-		return $yaml_settings;
-
-	}
-
-
-	/**
-	* Get a site all yaml configuration.
-	*
-	* @param string $name
-	*   Name of the site.
-	*/
-	private function yamlGetSiteArgs( $name ){
-
-		if ( ! $this->yaml_settings ) return false;
-
-		$args = false;
-
-		foreach ( $this->yaml_settings['sites']['update'] as $key => $value ) {
-
-			if ( $value['name'] === $name ) {
-
-				$args = $value;
-
-				if ( isset( $this->yaml_settings['sites']['settings'] ) ) {
-
-					$args = array_merge( $this->yaml_settings['sites']['settings'], $args );
-
-				}
-
-				return $args;
+				$result = $slack->send();
 
 			}
 
 		}
 
-		return $args;
+
 
 	}
 
 
-	/**
-	* Get a specific site setting.
-	*
-	* @param string $name
-	*   Name of the site.
-	* @param string $key
-	*   Key of value needed.
-	*/
-	private function yamlGetSiteSetting( $name, $key ){
-
-		if ( ! $this->yaml_settings ) return false;
-
-		$settings = $this->yamlGetSiteArgs( $name );
-
-		$value = ( isset( $settings[$key] ) ? $settings[$key] : false  );
-
-		return $value;
-
-	}
-
-
-	/**
-	* Get a specific site setting.
-	*
-	* @param array $settings
-	*   Validate yaml settings and returns filtered one.
-	*/
-	private function yamlValidateSettings( $settings ){
-
-		// we can add config validations here
-		return $settings;
-
-	}
-
-
-	/**
-	* Get terminus executables path.
-	*
-	* @param string $name
-	*   Name of the site.
-	* @param string $key
-	*   Key of value needed.
-	*/
-	private function yamlGetExecPath(){
-
-		if ( ! $this->yaml_settings ) return false;
-
-		if ( ! isset( $this->yaml_settings['terminus_dir'] ) ) return false;
-
-		$path = $this->yaml_settings['terminus_dir'];
-
-		return $path;
-
-	}
-
-
-	/**
-	* Get slack setting.
-	*
-	*/
-	private function yamlGetSlackSettings() {
-
-		if ( ! $this->yaml_settings ) return false;
-
-		if ( ! isset( $this->yaml_settings['slack_settings'] ) ) return false;
-
-		$slack_settings = $this->yaml_settings['slack_settings'];
-
-		foreach ( $slack_settings as $key => $value ) {
-
-			switch ( $key ) {
-
-				case 'channel':
-				$slack_settings[$key] = "#{$value}";
-				break;
-
-				case 'icon_emoji':
-				$slack_settings[$key] = ":{$value}:";
-				break;
-
-			}
-
-		}
-
-		if ( $slack_settings ) {
-
-			require_once 'lib/Simple_Slack.php';
-
-		}
-
-		return $slack_settings;
-
-	}
-
-
-	/**
-	* Parse update notes to array table
-	*
-	*/
-	private function getUpdateNotes( $update_notes ) {
-
-		require_once( 'lib/Update_Translator.php' );
-
-		$data = new \Update_Translator( $update_notes );
-
-		return $data->table_reports;
-
-	}
-
-
-	/**
-	* Parse update notes to get keyed array
-	*
-	*/
-	private function getUpdateData( $update_notes ) {
-
-		require_once( 'lib/Update_Translator.php' );
-
-		$data = new \Update_Translator( $update_notes );
-
-		return $data->data;
-
-	}
-
-
-	/**
-	* Get dev, test, and live url of a site
-	*
-	*/
+	// 	Get site's urls
 	private function getSiteEnvUrl( $site ) {
 
 		$env_url = array();
@@ -1360,189 +1254,32 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 	}
 
 
-	/**
-	* Function to get dry run data
-	*
-	*/
-	private function getSitePluginStatus( $name, $environ ) {
+	// 	Print message to cli
+	public function notice( $message, $before = true, $after = true ) {
 
-		$result = false;
+		if ( $before ) { new_line(); }
 
-		$wp_options = "plugin list --all --fields=name,status,version,update_version,update_package --format=json";
+		echo $message;
 
-		$tm_command_path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
-
-		$tm_command = "$tm_command_path wp \"$wp_options\" --site=$name --env=$environ";
-
-		$exec = exec( $tm_command, $on_success, $on_error );
-
-		if ( $on_success && isset( $on_success[0] ) ) {
-
-			$result = json_decode( $on_success[0] );
-
-		}
-
-		return $result;
+		if ( $after ) { new_line(); }
 
 	}
 
 
-	/**
-	* Function to alert slack user of unavailable packages
-	*
-	*/
-	private function getSlackTeamMember( $site_name ) {
+	// 	Loads all external helper files
+	public function load_helpers() {
 
-		$team_member_name = $this->yamlGetSiteSetting( $site_name, 'err_notify' );
 
-		if ( ! $team_member_name ) {
+		// 	Terminus command modifications
+		require( 'lib/mod-SiteCommand.php' );
+		require( 'lib/mod-WpCommand.php' );
 
-			$team_member_name = ( isset( $this->yaml_settings['slack_settings']['err_notify'] ) ? $this->yaml_settings['slack_settings']['err_notify'] : false );
 
-		}
+		// 	Helper functions
+		require( 'lib/lib-Helpers.php' );
+		require( 'lib/lib-Simple_Slack.php' );
+		require( 'lib/lib-Spyc.php' );
 
-		return $team_member_name;
-
-	}
-
-
-	/**
-	* Function to check for string in a site
-	*
-	*/
-	private function siteFindStr( $url, $find ) {
-
-		$ch = curl_init( $url );
-
-		curl_setopt( $ch, CURLOPT_FOLLOWLOCATION, true );
-
-		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
-
-		$text = curl_exec( $ch );
-
-		$test = strpos( $text, $find );
-
-		if ( $test === false ) return false;
-
-		return true;
-
-	}
-
-
-	/**
-	* Function to check if a site is down
-	*
-	*/
-	private function checkIsSiteDown( $name, $environ ) {
-
-		$assoc_args = array(
-			'site' => $name,
-			'env'  => $environ,
-		);
-
-		$site = $this->sites->get(
-			$this->input()->siteName( array( 'args' => $assoc_args ) )
-		);
-
-		$env  = $site->environments->get(
-			$this->input()->env( array( 'args' => $assoc_args, 'site' => $site ) )
-		);
-
-		$env_url = $this->getSiteEnvUrl( $site );
-
-		// 	Get url
-		$url = $env_url[$environ];
-
-		//	Check return code
-		exec( 'curl -sL -w "%{http_code}" "'. $url .'"', $on_success );
-
-		preg_match_all( '!\d+!', end( $on_success ), $matches );
-
-		$code = intval( implode( ' ', $matches[0] ) );
-
-		$err_string = 'Fatal error:';
-
-		if ( $code === 500 || $code === 0 ) return true;
-
-		if ( $on_success ) {
-
-			foreach ( $on_success as $value ) {
-				
-				$test = ( strpos( $value, $err_string ) !== false );
-
-				if ( $test ) return true;
-
-			}
-
-		}
-
-		// 	Check fatal error
-		$command_path = ( $this->yamlGetExecPath() ? $this->yamlGetExecPath() : 'terminus' );
-
-		$wp_cli = "plugin list 2>&1";
-
-		$command = "$command_path wp \"$wp_cli\" --site=$name --env=$environ";
-
-		exec( $command, $response );
-
-		if ( $response ) {
-
-			$err_string = 'Fatal error:';
-
-			$err_string2 = 'Parse error:';
-			
-			foreach ( $response as $value ) {
-				
-				$test = ( strpos( $value, $err_string ) !== false );
-
-				if ( $test ) return true;
-
-				$test = ( strpos( $value, $err_string2 ) !== false );
-
-				if ( $test ) return true;
-
-			}
-
-		}
-
-		return false;
-
-	}
-
-
-	/* Validations */
-
-	private function getSetting( $name, $default_value = false ) {
-
-		return isset($this->assoc_args[$name]) ? true : $default_value;
-
-	}
-
-	private function isReport() {
-
-		return isset($this->assoc_args['report']) ? true : false;
-
-	}
-
-	private function isConfigFile() {
-
-		return isset($this->assoc_args['config-file']) ? true : false;
-
-	}
-
-	private function isAutoDeploy() {
-
-		if ( $this->isConfigFile() ) return false;
-
-		return isset($this->assoc_args['auto-deploy']) ? true : false;
-
-	}
-
-	private function isUpstreamUpdate() {
-
-		if ( $this->isConfigFile() ) return false;
-
-		return isset($this->assoc_args['upstream']) ? true : false;
 
 	}
 

@@ -262,6 +262,8 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		$skip_backup	= $queue['skip-backup'];
 		$auto_deploy	= $queue['auto-deploy'];
 		$err_notify		= $queue['err_notify'];
+		$db_version 	= false;
+		$db_upgrade		= false;
 
 
 	    /*	Validations
@@ -300,7 +302,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			if ( ! empty( $diff ) ) {
 
-				$error_message = "unable to update $environ environment due to pending changes.  Commit changes and try again.";
+				$error_message = "unable to update $environ environment due to pending changes. Commit changes and try again.";
 
 				$response['error'] = true;
 
@@ -348,7 +350,11 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 				if ( $available_update ) {
 
-					$this->notice( "=> upstream update available, beginning update ", false, false );
+					$this->notice( "=> upstream update available.", false, false );
+
+					$db_version = $this->get_option( 'clover-test', 'dev', 'db_version' );
+
+					$this->notice( "=> db_version detected at $db_version", true, false );
 
 					$mode = $this->connection_info( $name, $environ );
 
@@ -364,11 +370,18 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 					$upstream_response = $this->apply_upstream( $name );
 
+					$this->update_db( $name, 'dev' );
+
 					$response['report'] = true;
 
 					$response['message']['upstream'] = $this->process_response( 'upstream', $upstream_response );
 					
 					$this->notice( "=> " . $response['message']['upstream'], false );
+
+					// 	check old db_version against new one
+					$updated_db_version = $this->get_option( 'clover-test', 'dev', 'db_version' );
+
+					$this->notice( "=> db_version at $updated_db_version after upstream update.", false );
 
 					// 	check error
 					$this->notice( "=> checking for error after upstream updates", false, false );
@@ -430,6 +443,11 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 					$response['message']['log'][] = $site_error_message;
 
 					$this->notice( "=> $site_error_message" );
+
+					// 	change back to git mode
+					$this->notice( "=> changing connection mode to git " );
+
+					$this->change_connection( $name, $environ, 'git' );
 
 					return $response;
 
@@ -502,6 +520,11 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 					$this->notice( "=> $plugin_error_message" );
 
+					// 	change back to git mode
+					$this->notice( "=> changing connection mode to git " );
+
+					$this->change_connection( $name, $environ, 'git' );
+
 					return $response;
 
 				} else {
@@ -543,6 +566,11 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 					$response['message']['log'][] = $site_error_message;
 
 					$this->notice( "=> $site_error_message" );
+
+					// 	change back to git mode
+					$this->notice( "=> changing connection mode to git " );
+
+					$this->change_connection( $name, $environ, 'git' );
 
 					return $response;
 
@@ -588,7 +616,16 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 				$this->notice( "=> $site_error_message" );
 
+				// 	change back to git mode
+				$this->notice( "=> changing connection mode to git " );
+
+				$this->change_connection( $name, $environ, 'git' );
+
 				return $response;
+
+			} else {
+
+				$this->update_db( $name, 'test' );
 
 			}
 
@@ -628,7 +665,16 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 				$this->notice( "=> $site_error_message" );
 
+				// 	change back to git mode
+				$this->notice( "=> changing connection mode to git " );
+
+				$this->change_connection( $name, $environ, 'git' );
+
 				return $response;
+
+			} else {
+
+				$this->update_db( $name, 'live' );
 
 			}
 
@@ -636,13 +682,9 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		}
 
 		// 	change back to git mode
-		if ( 'sftp' == $this->connection_info( $name, $environ ) && ! $response['error']) {
+		$this->notice( "=> changing connection mode to git " );
 
-			$this->notice( "=> changing connection mode to git ", false );
-
-			$this->change_connection( $name, $environ, 'sftp' );
-
-		}
+		$this->change_connection( $name, $environ, 'git' );
 
 
 		// 	return report
@@ -1039,6 +1081,48 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		}
 
 		return $response;
+
+	}
+
+
+	// 	Get option from a site
+	private function get_option( $site_name, $site_env, $option ) {
+
+		$response = false;
+
+		$args = array(
+			"option get $option --format=json",
+		);
+
+		$info = $this->wp_cli( $site_name, $site_env, $args );
+
+		if ( isset( $info['output'] ) ) {
+
+			$response = json_decode( $info['output'] );
+
+		}
+
+		return $response;
+
+	}
+
+
+	// 	Update core database
+	private function update_db( $site_name, $site_env, $dry_run = false, $network = false ) {
+
+		$command = 'core update-db';
+
+		$command .= ( $dry_run ? ' --dry-run' : '' );
+
+		$command .= ( $network ? ' --network' : '' );
+
+		$args = array(
+			$command,
+		);
+
+		$info = $this->wp_cli( $site_name, $site_env, $args );
+
+		return $info;
 
 	}
 

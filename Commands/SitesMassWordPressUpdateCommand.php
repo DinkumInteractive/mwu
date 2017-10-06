@@ -1078,9 +1078,40 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 			$response = json_decode( $info['output'] );
 
+			if ( is_null( $response ) ) {
+
+				$response  = '[';
+
+				$response .= $this->get_string_between( $info['output'], '[', ']' );
+
+				$response .= ']';
+
+				$response = json_decode( $response );
+
+			}
+
 		}
 
 		return $response;
+
+	}
+
+
+	// 	Returns a substring between two strings
+	// 	Source: http://stackoverflow.com/questions/5696412/get-substring-between-two-strings-php
+	private function get_string_between( $string, $start, $end ) {
+
+		$string = ' ' . $string;
+
+		$ini = strpos($string, $start);
+
+		if ($ini == 0) return '';
+
+		$ini += strlen($start);
+
+		$len = strpos($string, $end, $ini) - $ini;
+
+		return substr($string, $ini, $len);
 
 	}
 

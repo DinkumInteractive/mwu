@@ -4,7 +4,6 @@ sites-test.yml
 
 # Composer #
 ############
-composer.json
 composer.lock
 vendor
 

@@ -77,13 +77,24 @@ class Simple_Slack {
 		curl_setopt( $ch, CURLOPT_URL, $this->url );
 		curl_setopt( $ch, CURLOPT_POST, 1 );
 		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
-		curl_setopt( $ch, CURLOPT_TIMEOUT, 5 );
+		curl_setopt( $ch, CURLOPT_TIMEOUT, 60 );
 		curl_setopt( $ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json') );
 		curl_setopt( $ch, CURLOPT_POSTFIELDS, $payload );
 
 		$result = curl_exec( $ch );
 
-		$payload_pretty = json_encode($post,JSON_PRETTY_PRINT); // Uncomment to debug JSON
+		// Check if any error occurred
+		if ( curl_errno( $ch ) ) {
+			//	Curl error | https://curl.haxx.se/libcurl/c/libcurl-errors.html
+			echo 'Curl error: ' . curl_error( $ch );
+		}
+
+		$payload_pretty = json_encode($post,JSON_PRETTY_PRINT); 
+
+		/*	Uncomment to debug
+			var_dump($payload_pretty);
+			var_dump($result);
+		 */
 
 		curl_close( $ch );
 

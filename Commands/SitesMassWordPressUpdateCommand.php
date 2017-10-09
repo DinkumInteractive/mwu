@@ -317,6 +317,10 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		}
 
 
+		// 	Wake up site
+		$this->wake_site( $name, 'dev' );
+
+
 		// 	backup
 		if ( $skip_backup ) {
 
@@ -352,7 +356,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 					$this->notice( "=> upstream update available.", false, false );
 
-					$db_version = $this->get_option( 'clover-test', 'dev', 'db_version' );
+					$db_version = $this->get_option( $name, 'dev', 'db_version' );
 
 					$this->notice( "=> db_version detected at $db_version", true, false );
 
@@ -379,7 +383,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 					$this->notice( "=> " . $response['message']['upstream'], false );
 
 					// 	check old db_version against new one
-					$updated_db_version = $this->get_option( 'clover-test', 'dev', 'db_version' );
+					$updated_db_version = $this->get_option( $name, 'dev', 'db_version' );
 
 					$this->notice( "=> db_version at $updated_db_version after upstream update.", false );
 
@@ -531,15 +535,33 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 
 					$this->notice( "=> no error found after plugins update.", true, false );
 
-					$this->notice( "=> commiting changes on site ", true, false );
+				}
 
-					$commit_message = 'Updates applied by Mass Wordpress Update terminus plugin.';
+				$test = true;
 
-					$commit = $this->commit( $name, $environ, $commit_message );
+				while( $test ) {
 
-					$response['message']['auto_commit'] = $this->process_response( 'auto_commit', $commit );
-					
-					$this->notice( "=> " . $response['message']['auto_commit'], false );
+					if ( $this->has_uncommited_changes( $name, 'dev' ) ) {
+
+						$this->notice( "=> commiting changes on site ", true, false );
+
+						$commit_message = 'Updates applied by Mass Wordpress Update terminus plugin.';
+
+						$commit = $this->commit( $name, $environ, $commit_message );
+
+						$response['message']['auto_commit'] = $this->process_response( 'auto_commit', $commit );
+						
+						$this->notice( "=> " . $response['message']['auto_commit'], false );
+
+						$test = false;
+
+					} else {
+
+						$this->notice( "=> no changes found after plugins update. Retrying.", true, false );
+
+						sleep( 6 );
+
+					}
 
 				}
 
@@ -548,7 +570,7 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		}
 
 		// 	deploy to test and live
-		if ( $auto_deploy && 'dev' == $environ &&  ! $response['error'] ) {
+		if ( $auto_deploy && 'dev' == $environ &&  ! $response['error'] && isset( $commit_message ) ) {
 
 			// 	check for error
 			if ( ! $upstream && ! $response['message']['updates'] ) {
@@ -1231,6 +1253,50 @@ class MassWordPressUpdateCommand extends TerminusCommand {
 		) );
 
 		return $info;
+
+	}
+
+
+	// 	Check for uncommited changes
+	private function has_uncommited_changes( $name, $environ ) {
+
+		$assoc_args = array(
+			'site' => $name,
+			'env'  => $environ,
+		);
+
+		$site = $this->sites->get(
+			$this->input()->siteName( array( 'args' => $assoc_args ) )
+		);
+
+		$env  = $site->environments->get(
+			$this->input()->env( array( 'args' => $assoc_args, 'site' => $site ) )
+		);
+
+		$diff = (array)$env->diffstat();
+
+		return ( ! empty( $diff ) );
+
+	}
+
+
+	// 	Wake a site
+	private function wake_site( $name, $environ ) {
+
+		$assoc_args = array(
+			'site' => $name,
+			'env'  => $environ,
+		);
+
+		$site = $this->sites->get(
+			$this->input()->siteName( array( 'args' => $assoc_args ) )
+		);
+
+		$env  = $site->environments->get(
+			$this->input()->env( array( 'args' => $assoc_args, 'site' => $site ) )
+		);
+
+		$wake = $env->wake();
 
 	}
 

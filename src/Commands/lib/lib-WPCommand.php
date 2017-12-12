@@ -42,7 +42,7 @@ class MWU_WPCommand {
 
 	}
 
-	public function has_update() {
+	public function has_update( $plugin_name = false ) {
 
 		$has_update = false;
 
@@ -50,11 +50,30 @@ class MWU_WPCommand {
 
 		foreach ( $plugins as $plugin ) {
 
-			if ( 'available' === $plugin->update && 'active' === $plugin->status ) {
+			if ( $plugin_name ) {
 
-				$has_update = true;
+				if ( 
+					'available' === $plugin->update && 
+					$plugin->update_package && 
+					'none' != $plugin->update_package && 
+					'active' === $plugin->status &&
+					$plugin_name === $plugin->name
+				) return true;
 
-				break;
+			} else {
+
+				if ( 
+					'available' === $plugin->update && 
+					$plugin->update_package && 
+					'none' != $plugin->update_package && 
+					'active' === $plugin->status 
+				) {
+
+					$has_update = true;
+
+					break;
+
+				}
 
 			}
 			
@@ -107,6 +126,25 @@ class MWU_WPCommand {
 		}
 
 		return $response;
+
+	}
+
+	public function is_timed_out_error( $update_response ) {
+
+		if ( $update_response ) {
+
+			$error_exist = false;
+
+			// 	Check for error in update;
+			foreach ( $update_response as $index => $update ) {
+
+				if ( 'Error' === $update->status && $this->has_update( $update->name ) ) return true;
+
+			}
+
+		}
+
+		return false;
 
 	}
 

@@ -276,9 +276,11 @@ class MwuCommand extends SiteCommand {
 
         	} else {
 
+        		echo "\n";
+
 				$this->respond( 'upstream_404' );
 
-				$report['data']['upstream'] = 'Site upstream not found.';
+				$report['data']['upstream'] = 'Upstream update is not available.';
 
 			}
 
@@ -321,6 +323,8 @@ class MwuCommand extends SiteCommand {
 				
 				$this->respond( 'update_plugins_404' );
 
+				$report['data']['update_list'] = false;
+
 			}
 
 		}
@@ -329,7 +333,7 @@ class MwuCommand extends SiteCommand {
 		if ( ! $this->is_error( $site_env ) && $auto_commit ) {
 
 			// 	Check for diff
-			$diff = get_object_vars( $this->get_diff( $site_env ) );
+			$diff = get_object_vars( $this->get_diff( "$name.test" ) );
 
 			if ( count( $diff ) > 0 ) {
 
@@ -339,58 +343,60 @@ class MwuCommand extends SiteCommand {
 
 				$this->respond( 'commit_changes_finished' );
 
+				// 	Deploy site
+				if ( $auto_deploy ) {
+
+					$this->respond( 'deploy_to_test' );
+
+					$deploy = $this->deploy( "$name.test", "Deploy to test - $auto_commit" );
+
+					if ( $deploy && ! $this->is_error( "$name.test" ) ) {
+						
+						$this->respond( 'deployed_to_test' );
+
+						/*	@TODO: There might be other alternatives to report.
+						 */
+						$report['data']['deploy_to_test'] = 'Deployed to test environment.';
+
+						$this->respond( 'deploy_to_live' );
+
+						$deploy = $this->deploy( "$name.live", "Deploy to live - $auto_commit" );
+
+						if ( $deploy && ! $this->is_error( "$name.live" ) ) {
+
+							$this->respond( 'deployed_to_live' );
+
+							/*	@TODO: There might be other alternatives to report.
+							 */
+							$report['data']['deploy_to_live'] = 'Deployed to live environment.';
+							
+						} else {
+
+							/*	@TODO: There might be other alternatives to report.
+							 */
+							$report['data']['deploy_to_live'] = 'Deploy to live environment failed.';
+
+							$this->respond( 'deploy_to_live_failed' );
+
+						}
+
+					} else {
+
+						$this->respond( 'deploy_to_test_failed' );
+
+						/*	@TODO: There might be other alternatives to report.
+						 */
+						$report['data']['deploy_to_test'] = 'Deploy to test canceled.';
+
+					}
+
+				}
+
 			} else {
 
 				$this->respond( 'commit_changes_none' );
 
-			}
-
-			// 	Deploy site
-			if ( $auto_deploy ) {
-
-				$this->respond( 'deploy_to_test' );
-
-				$deploy = $this->deploy( "$name.test", "Deploy to test - $auto_commit" );
-
-				if ( $deploy && ! $this->is_error( "$name.test" ) ) {
-					
-					$this->respond( 'deployed_to_test' );
-
-					/*	@TODO: There might be other alternatives to report.
-					 */
-					$report['data']['deploy_to_test'] = 'Deployed to test environment.';
-
-					$this->respond( 'deploy_to_live' );
-
-					$deploy = $this->deploy( "$name.live", "Deploy to live - $auto_commit" );
-
-					if ( $deploy && ! $this->is_error( "$name.live" ) ) {
-
-						$this->respond( 'deployed_to_live' );
-
-						/*	@TODO: There might be other alternatives to report.
-						 */
-						$report['data']['deploy_to_live'] = 'Deployed to live environment.';
-						
-					} else {
-
-						/*	@TODO: There might be other alternatives to report.
-						 */
-						$report['data']['deploy_to_live'] = 'Deploy to live environment failed.';
-
-						$this->respond( 'deploy_to_live_failed' );
-
-					}
-
-				} else {
-
-					$this->respond( 'deploy_to_test_failed' );
-
-					/*	@TODO: There might be other alternatives to report.
-					 */
-					$report['data']['deploy_to_test'] = 'Deploy to test environment failed.';
-
-				}
+				$report['data']['deploy_to_test'] = 'No changes detected. Nothing to deploy.';
 
 			}
 
@@ -398,6 +404,11 @@ class MwuCommand extends SiteCommand {
 
 		// 	Change connection to git
 		$this->set_connection( $site_env, 'git' );
+
+		/*	@TODO: checking
+		var_dump($report);
+		exit;
+		 */
 
 		return $report;
 
@@ -556,7 +567,17 @@ class MwuCommand extends SiteCommand {
 
 		$mwu_cli = new \MWU_WPCommand( $this->get_site_environment( $site_env ) );
 
-		return $mwu_cli->update_plugins();
+		$retry_times = 5;
+
+		do {
+
+			$update_response = $mwu_cli->update_plugins();
+
+			$retry_times--;
+
+		} while ( $mwu_cli->is_timed_out_error( $update_response ) && $retry_times > 0 );
+
+		return $update_response;
 
 	}
 
@@ -690,7 +711,7 @@ class MwuCommand extends SiteCommand {
 				break;
 
 			case 'upstream_404':
-				$this->_e( "Upstream update not found.", true );
+				$this->_e( "Upstream update is not available.", true );
 				break;
 
 			case 'slack_sending':
@@ -771,17 +792,28 @@ class MwuCommand extends SiteCommand {
 								$new_data .= "=> $value\n";
 								break;
 							case 'update_plugins':
-								$new_data .= "=> Plugins updated:\n";
-								foreach ( $value as $key => $updated ) {
-									$new_data .= '   [ ' . $this->format_version( $updated->old_version ) . ' ] -> [ ' . $this->format_version( $updated->new_version ) . ' ]    ' . $updated->name;
-									$new_data .= "\n";
+								if ( $value ) {
+									$new_data .= "=> Plugins update:\n";
+									foreach ( $value as $key => $updated ) {
+										$new_data .= '   [ ' . $this->format_version( $updated->old_version ) . ' ] -> [ ' . $this->format_version( $updated->new_version ) . ' ]    ' . $updated->name;
+										if ( 'Error' === $updated->status ) {
+											$new_data .=  '    ERROR';
+										}
+										$new_data .= "\n";
+									}
+								} else {
+									$new_data .= "=> No available plugin updates.\n";
 								}
 								break;
 							case 'update_list':
-								$new_data .= "=> Available plugin updates:\n";
-								foreach ( $value as $key => $plugin ) {
-									$new_data .= '   [ ' . $this->format_version( $plugin->version ) . ' ] -> [ ' . $this->format_version( $plugin->update_version ) . ' ]    ' . $plugin->name . ' | Package: ' . ( $plugin->update_package ? 'available' : 'not available' );
-									$new_data .= "\n";
+								if ( $value ) {
+									$new_data .= "=> Available plugin updates:\n";
+									foreach ( $value as $key => $plugin ) {
+										$new_data .= '   [ ' . $this->format_version( $plugin->version ) . ' ] -> [ ' . $this->format_version( $plugin->update_version ) . ' ]    ' . $plugin->name . ' | Package: ' . ( $plugin->update_package ? 'available' : 'not available' );
+										$new_data .= "\n";
+									}
+								} else {
+									$new_data .= "=> No available plugin updates.\n";
 								}
 								break;
 							case 'upstream':
@@ -846,36 +878,53 @@ class MwuCommand extends SiteCommand {
 			'icon_emoji'	=> ':' . $this->slack_settings['icon_emoji'] . ':',
 			'text'			=> $message,
 			'mrkdwn'		=> true,
-			'attachments'	=> array( array(
-				'fallback'		=> 'Terminus MWU message.',
-				'color'			=> $color,
-				'author_name'	=> $name,
-				'fields'		=> array(
-					array(
-						'title'		=> 'Dashboard',
-						'value'		=> "<https://dashboard.pantheon.io/sites/$name|dashboard.pantheon.io>",
-						'short'		=> true
+			'attachments'	=> array( 
+				array(
+					'fallback'		=> 'Terminus MWU message.',
+					'color'			=> $color,
+					'author_name'	=> $name,
+					'fields'		=> array(
+							array(
+								'title'		=> 'Dashboard',
+								'value'		=> "<https://dashboard.pantheon.io/sites/$name|dashboard.pantheon.io>",
+								'short'		=> true
+							),
+							array(
+								'title'		=> 'Dev',
+								'value'		=> ( isset( $env_urls['dev'] ) ? $env_urls['dev'] : 'undefined' ),
+								'short'		=> true
+							),
+							array(
+								'title'		=> 'Test',
+								'value'		=> ( isset( $env_urls['test'] ) ? $env_urls['test'] : 'undefined' ),
+								'short'		=> true
+							),
+							array(
+								'title'		=> 'Live',
+								'value'		=> ( isset( $env_urls['live'] ) ? $env_urls['live'] : 'undefined' ),
+								'short'		=> true
+							),
 					),
-					array(
-						'title'		=> 'Dev',
-						'value'		=> ( isset( $env_urls['dev'] ) ? $env_urls['dev'] : 'undefined' ),
-						'short'		=> true
-					),
-					array(
-						'title'		=> 'Test',
-						'value'		=> ( isset( $env_urls['test'] ) ? $env_urls['test'] : 'undefined' ),
-						'short'		=> true
-					),
-					array(
-						'title'		=> 'Live',
-						'value'		=> ( isset( $env_urls['live'] ) ? $env_urls['live'] : 'undefined' ),
-						'short'		=> true
+					'footer'		=> 'Update time: ',
+					'footer_icon'	=> 'https://platform.slack-edge.com/img/default_application_icon.png',
+					'ts'			=> $date->getTimestamp()
+				),
+				array(
+					'text'				=> 'Available Actions',
+					'fallback'			=> 'Zeus is not here at the moment.',
+					'callback_id'		=> 'zeus_commands',
+					'color'				=> '#3AA3E3',
+					'attachment_type'	=> 'default',
+					'actions'			=> array(
+						array(
+							'name'			=> 'command',
+							'text'			=> 'Update',
+							'type'			=> 'button',
+							'value'			=> 'update',
+						),
 					),
 				),
-				'footer'		=> 'Update time: ',
-				'footer_icon'	=> 'https://platform.slack-edge.com/img/default_application_icon.png',
-				'ts'			=> $date->getTimestamp()
-			) ),
+			),
 		);
 
 		//	Send to specific user

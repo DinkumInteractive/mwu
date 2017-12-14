@@ -1,5 +1,5 @@
 {
-    "name": "pantheon-systems/mwu",
+    "name": "DinkumInteractive/mwu",
     "description": "WordPress mass update.",
     "type": "terminus-plugin",
     "license": "MIT",

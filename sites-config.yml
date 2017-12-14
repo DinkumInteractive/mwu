@@ -14,6 +14,8 @@ sites:
       auto_commit: true
       backup: true
       auto_deploy: true
+      exclude:
+        - plugin-name
   update:
     - name: test-site-1
       notifications:

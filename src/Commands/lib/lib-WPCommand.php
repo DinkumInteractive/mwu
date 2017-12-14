@@ -111,9 +111,11 @@ class MWU_WPCommand {
 
 	}
 
-	public function update_plugins() {
+	public function update_plugins( $exclude = false ) {
 
-		$command = "wp plugin update --all --format=json";
+		$exclude = ( $exclude ? implode( ',', $exclude ) : '' );
+
+		$command = "wp plugin update --all --format=json --exclude=$exclude";
 
 		$result = $this->run( $command, true );
 

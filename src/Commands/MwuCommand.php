@@ -153,20 +153,35 @@ class MwuCommand extends SiteCommand {
 
 					$sites = $sites_list['update'];
 
+					// 	Manage slack settings
 					if ( isset( $yaml['slack_settings'] ) ) {
 
 						$this->slack_settings = $yaml['slack_settings'];
 
 					}
 
-					foreach ( $sites as $site ) {
+					// 	Manage plugin update exclusion
+					if ( isset( $yaml['sites']['settings']['exclude'] ) ) {
 
+						$this->exclude = $yaml['sites']['settings']['exclude'];
+
+					}
+
+					foreach ( $sites as $site ) {
 
 						$site_args = array_merge( $settings, $site );
 
+						// 	Merge slack setting arguments
 						if ( isset( $this->slack_settings['notifications'] ) ) {
 
 							$site_args['notifications'] = array_merge( $this->slack_settings['notifications'], ( isset( $site_args['notifications'] ) ? $site_args['notifications'] : array() ) );
+
+						}
+
+						// 	Merge plugin update exclude arguments
+						if ( isset( $this->exclude ) ) {
+
+							$site_args['exclude'] = array_unique( array_merge( $this->exclude, ( isset( $site_args['exclude'] ) ? $site_args['exclude'] : array() ) ) );
 
 						}
 
@@ -195,6 +210,7 @@ class MwuCommand extends SiteCommand {
 		$env = $args['env'];
 		$upstream = $args['upstream'];
 		$update = $args['update'];
+		$exclude = ( isset( $args['exclude'] ) ? $args['exclude'] : false );
 		$auto_commit = $args['auto_commit'];
 		$backup = $args['backup'];
 		$auto_deploy = $args['auto_deploy'];
@@ -299,7 +315,7 @@ class MwuCommand extends SiteCommand {
 
 				$this->respond( 'update_plugins_start' );
 
-				$update_plugins = $this->update_plugins( $site_env );
+				$update_plugins = $this->update_plugins( $site_env, $exclude );
 
 				$report['data']['update_plugins'] = $update_plugins;
 
@@ -563,7 +579,7 @@ class MwuCommand extends SiteCommand {
 	 *
      * @since 1.0.0
 	 */
-	public function update_plugins( $site_env ) {
+	public function update_plugins( $site_env, $exclude = false ) {
 
 		$mwu_cli = new \MWU_WPCommand( $this->get_site_environment( $site_env ) );
 
@@ -571,7 +587,7 @@ class MwuCommand extends SiteCommand {
 
 		do {
 
-			$update_response = $mwu_cli->update_plugins();
+			$update_response = $mwu_cli->update_plugins( $exclude );
 
 			$retry_times--;
 

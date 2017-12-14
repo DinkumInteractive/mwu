@@ -288,7 +288,7 @@ class MwuCommand extends SiteCommand {
 
 				$this->respond( 'upstream_stop' );
 
-				$report['data']['upstream'] = 'Updated site upstream.';
+				$report['data']['upstream'] = $update_upstream;
 
         	} else {
 
@@ -530,7 +530,13 @@ class MwuCommand extends SiteCommand {
 
 				echo "\n";
 
-				$updated = true;
+				$updated = array();
+
+				foreach ( $logs as $log ) {
+
+					$updated[] = $log;
+
+				}
 				
 			} catch ( TerminusException $e) {
 				
@@ -833,7 +839,13 @@ class MwuCommand extends SiteCommand {
 								}
 								break;
 							case 'upstream':
-								$new_data .= "=> $value\n";
+								$new_data .= "=> Updated site upstream.\n";
+								if ( $value ) {
+									foreach ( $value as $log ) {
+										$new_data .= '   [ ' . $log->author . ' ] ' . $log->message;
+										$new_data .= "\n";
+									}
+								}
 								break;
 							case 'deploy_to_test':
 								$new_data .= "=> $value\n";

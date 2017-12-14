@@ -1,4 +1,4 @@
-<?php 
+<?php
 
 namespace Pantheon\MWU\Commands;
 
@@ -10,1043 +10,978 @@ use Pantheon\Terminus\Exceptions\TerminusException;
 /**
  * Updates dev environment of a WordPress site.
  */
-class MwuCommand extends SiteCommand {
+class MwuCommand extends SiteCommand
+{
 
-	/**
-	 * Default options made when no param declared.
-	 *
+    /**
+     * Default options made when no param declared.
+     *
      * @since 1.0.0
-	 */
-	const options_default = array(
-		'name'              => '',
-		'env'               => 'dev',
-		'backup'            => 'all|code|files|database|db',
-		'upstream'          => false,
-		'update'            => true,
-		'auto_commit'       => 'Site updated by MWU.',
-		'auto_deploy'       => false,
-	);
+     */
+    const options_default = array(
+        'name'              => '',
+        'env'               => 'dev',
+        'backup'            => 'all|code|files|database|db',
+        'upstream'          => false,
+        'update'            => true,
+        'auto_commit'       => 'Site updated by MWU.',
+        'auto_deploy'       => false,
+    );
 
-	/**
-	 * Settings.
-	 *
+    /**
+     * Settings.
+     *
      * @since 1.0.0
-	 */
-	const keep_backup = 365;
+     */
+    const keep_backup = 365;
 
-	/**
-	 * Queue of sites to be updated.
-	 *
+    /**
+     * Queue of sites to be updated.
+     *
      * @since 1.0.0
-	 */
-	public $queue = array();
+     */
+    public $queue = array();
 
-	/**
-	 * Slack settings.
-	 *
+    /**
+     * Slack settings.
+     *
      * @since 1.0.0
-	 */
-	public $slack_settings;
+     */
+    public $slack_settings;
 
-	/**
-	 * Update dev environment.
-	 *
-	 * @authenticated
+    /**
+     * Update dev environment.
+     *
+     * @authenticated
      * @authorize
-	 *
-	 * @command site:mwu
-	 *
+     *
+     * @command site:mwu
+     *
      * @param string $sites_config Sites yml.
-	 *
-     * @option 		name             Site name.
+     *
+     * @option      name             Site name.
      * @option      backup           Backup site at the start of the update process. Element to be backed up [all|code|files|database|db]
-     * @option 		upstream         Updates upstream.
-     * @option 		update           Update plugin.
+     * @option      upstream         Updates upstream.
+     * @option      update           Update plugin.
      * @option      auto_commit      Auto commit changes made.
      * @option      auto_deploy      Auto deploy to said env. Separated by ','.
-	 *
+     *
      * @since 1.0.0
-	 */
-	public function mwu( $sites_config = false, $options = self::options_default ) {
+     */
+    public function mwu($sites_config = false, $options = self::options_default)
+    {
 
-		// 	Load helpers.
-		$this->load_helpers();
+        // 	Load helpers.
+        $this->load_helpers();
 
-		/*	@TODO: 
+        /*  @TODO:
 			- test all functions
 			- check all response
 		exit;
 		 */
 
-		//	Create queue with either yml config or command options.
-		$this->queue = ( $sites_config ? $this->create_queue( $sites_config ) : $this->create_queue( $options ) );
+        //	Create queue with either yml config or command options.
+        $this->queue = ( $sites_config ? $this->create_queue($sites_config) : $this->create_queue($options) );
 
-		//	Process queue
-		if ( $this->queue ) {
+        //	Process queue
+        if ($this->queue) {
+            echo "\nSites found:\n";
 
-			echo "\nSites found:\n";
-
-			foreach ( $this->queue as $update_args ) {
-
-				$this->_e( $update_args['name'], true );
-
-			}
+            foreach ($this->queue as $update_args) {
+                $this->_e($update_args['name'], true);
+            }
 
 
-			foreach ( $this->queue as $update_args ) {
+            foreach ($this->queue as $update_args) {
+                echo "\n". 'Beginning updates on ' . $update_args['name'] . "\n";
 
-				echo "\n". 'Beginning updates on ' . $update_args['name'] . "\n";
+                echo "- - - - - - - - - - - - - - - - - - - - - - - -\n";
 
-				echo "- - - - - - - - - - - - - - - - - - - - - - - -\n";
+                $update_report = $this->update_site($update_args);
 
-				$update_report = $this->update_site( $update_args );
+                if ($this->slack_settings && $update_report) {
+                    $this->respond('slack_sending');
 
-				if ( $this->slack_settings && $update_report ) {
+                    $slack = $this->send_to_slack($update_args, $update_report);
 
-					$this->respond( 'slack_sending' );
+                    if ($slack) {
+                        $this->respond('slack_sent');
+                    } else {
+                        $this->respond('slack_not_sent');
+                    }
+                }
+            }
+        }
+    }
 
-					$slack = $this->send_to_slack( $update_args, $update_report );
-
-					if ( $slack ) {
-
-						$this->respond( 'slack_sent' );
-
-					} else {
-						
-						$this->respond( 'slack_not_sent' );
-
-					}
-
-				}
-
-			}
-
-		}
-
-	}
-
-	/**
-	 * Queue of sites to be updated.
-	 *
+    /**
+     * Queue of sites to be updated.
+     *
      * @return Sites queue.
-	 *
+     *
      * @since 1.0.0
-	 */
-	public function create_queue( $args ) {
+     */
+    public function create_queue($args)
+    {
 
-		$queue = array();
+        $queue = array();
 
-		if ( is_array( $args ) ) {
+        if (is_array($args)) {
+            $queue[] = array_merge(self::options_default, $args);
+        } elseif (is_string($args)) {
+            // 	Use yaml config
+            $file = file_get_contents($args);
 
-			$queue[] = array_merge( self::options_default, $args );
+            if ($yaml = spyc_load($file)) {
+                if ($sites_list = $yaml['sites']) {
+                    $settings = $sites_list['settings'];
 
-		} elseif ( is_string( $args ) ) {
+                    $sites = $sites_list['update'];
 
-			// 	Use yaml config
-			$file = file_get_contents( $args );
+                    // 	Manage slack settings
+                    if (isset($yaml['slack_settings'])) {
+                        $this->slack_settings = $yaml['slack_settings'];
+                    }
 
-			if ( $yaml = spyc_load( $file ) ) {
+                    // 	Manage plugin update exclusion
+                    if (isset($yaml['sites']['settings']['exclude'])) {
+                        $this->exclude = $yaml['sites']['settings']['exclude'];
+                    }
 
-				if ( $sites_list = $yaml['sites'] ) {
+                    foreach ($sites as $site) {
+                        $site_args = array_merge($settings, $site);
 
-					$settings = $sites_list['settings'];
+                        // 	Merge slack setting arguments
+                        if (isset($this->slack_settings['notifications'])) {
+                            $site_args['notifications'] = array_merge($this->slack_settings['notifications'], ( isset($site_args['notifications']) ? $site_args['notifications'] : array() ));
+                        }
 
-					$sites = $sites_list['update'];
+                        // 	Merge plugin update exclude arguments
+                        if (isset($this->exclude)) {
+                            $site_args['exclude'] = array_unique(array_merge($this->exclude, ( isset($site_args['exclude']) ? $site_args['exclude'] : array() )));
+                        }
 
-					// 	Manage slack settings
-					if ( isset( $yaml['slack_settings'] ) ) {
+                        $queue[] = $site_args;
+                    }
+                }
+            }
+        }
 
-						$this->slack_settings = $yaml['slack_settings'];
+        return $queue;
+    }
 
-					}
-
-					// 	Manage plugin update exclusion
-					if ( isset( $yaml['sites']['settings']['exclude'] ) ) {
-
-						$this->exclude = $yaml['sites']['settings']['exclude'];
-
-					}
-
-					foreach ( $sites as $site ) {
-
-						$site_args = array_merge( $settings, $site );
-
-						// 	Merge slack setting arguments
-						if ( isset( $this->slack_settings['notifications'] ) ) {
-
-							$site_args['notifications'] = array_merge( $this->slack_settings['notifications'], ( isset( $site_args['notifications'] ) ? $site_args['notifications'] : array() ) );
-
-						}
-
-						// 	Merge plugin update exclude arguments
-						if ( isset( $this->exclude ) ) {
-
-							$site_args['exclude'] = array_unique( array_merge( $this->exclude, ( isset( $site_args['exclude'] ) ? $site_args['exclude'] : array() ) ) );
-
-						}
-
-						$queue[] = $site_args;
-						
-					}
-
-				}
-
-			}
-
-		}
-
-		return $queue;
-
-	}
-
-	/**
-	 * Update a site.
-	 *
+    /**
+     * Update a site.
+     *
      * @since 1.0.0
-	 */
-	public function update_site( $args ) {
+     */
+    public function update_site($args)
+    {
 
-		$name = $args['name'];
-		$env = $args['env'];
-		$upstream = $args['upstream'];
-		$update = $args['update'];
-		$exclude = ( isset( $args['exclude'] ) ? $args['exclude'] : false );
-		$auto_commit = $args['auto_commit'];
-		$backup = $args['backup'];
-		$auto_deploy = $args['auto_deploy'];
-		$report = array( 'error' => false, 'data' => false );
+        $name = $args['name'];
+        $env = $args['env'];
+        $upstream = $args['upstream'];
+        $update = $args['update'];
+        $exclude = ( isset($args['exclude']) ? $args['exclude'] : false );
+        $auto_commit = $args['auto_commit'];
+        $backup = $args['backup'];
+        $auto_deploy = $args['auto_deploy'];
+        $report = array( 'error' => false, 'data' => false );
 
-		// 	Check site availability.
-		if ( ! $this->sites->nameIsTaken( $name ) ) 
-			return $this->respond( 'invalid_site_id', false );
+        // 	Check site availability.
+        if (! $this->sites->nameIsTaken($name)) {
+            return $this->respond('invalid_site_id', false);
+        }
 
-		// 	Site and environment
-		$site_env = "$name.$env";
-		$site = $this->sites->get( $name );
-		$info = $site->serialize();
+        // 	Site and environment
+        $site_env = "$name.$env";
+        $site = $this->sites->get($name);
+        $info = $site->serialize();
 
-		// 	Check if site uses WordPress
-		if ( 'wordpress' != $info['framework'] ) 
-			return $this->respond( 'invalid_framework', false );
+        // 	Check if site uses WordPress
+        if ('wordpress' != $info['framework']) {
+            return $this->respond('invalid_framework', false);
+        }
 
-		//	Check if site have pending changes.
-		if ( 'sftp' == $this->get_connection_info( $site_env ) ) {
+        //	Check if site have pending changes.
+        if ('sftp' == $this->get_connection_info($site_env)) {
+            $diff = get_object_vars($this->get_diff($site_env));
 
-			$diff = get_object_vars( $this->get_diff( $site_env ) );
+            if (0 === count($diff)) {
+                $this->set_connection($site_env, 'git');
+            } else {
+                $this->respond('uncommited_changes', $name);
 
-			if ( 0 === count( $diff ) ) {
+                return false;
+            }
+        }
 
-				$this->set_connection( $site_env, 'git' );
+        /*	@TODO: Site backup. Wait for stable Terminus function.
+		 */
+        if ($backup) {
+            $this->respond('backup_start');
 
-			} else {
+            $backup_args = array(
+                'element' => $backup,
+                'keep-for' => self::keep_backup,
+            );
 
-				$this->respond( 'uncommited_changes', $name );
+            $bk_element = $backup;
 
-				return false;
+            $keep = self::keep_backup;
 
-			}
+            $this->backup($site_env, $backup_args);
 
-		}
+            $this->respond('backup_finish', $backup_args);
 
-		/*	@TODO: Site backup. Wait for stable Terminus function.
-		 */	
-		if ( $backup ) {
+            $report['data']['backup'] = "Site $bk_element backed up. Back up data will be kept for $keep days.";
+        }
 
-			$this->respond( 'backup_start' );
+        //	Update site upstream.
+        if ($upstream) {
+            if ('sftp' == $this->get_connection_info($site_env)) {
+                $this->set_connection($site_env, 'git');
+            }
 
-			$backup_args = array(
-				'element' => $backup,
-				'keep-for' => self::keep_backup,
-			);
+            $this->respond('upstream_start');
 
-			$bk_element = $backup;
+            $update_upstream = $this->update_upstream($site_env);
 
-			$keep = self::keep_backup;
+            if ($update_upstream) {
+                $this->respond('upstream_stop');
 
-			$this->backup( $site_env, $backup_args );
+                $report['data']['upstream'] = $update_upstream;
+            } else {
+                echo "\n";
 
-			$this->respond( 'backup_finish', $backup_args );
+                $this->respond('upstream_404');
 
-			$report['data']['backup'] = "Site $bk_element backed up. Back up data will be kept for $keep days.";
+                $report['data']['upstream'] = false;
+            }
+        }
 
-		}
+        //	Update site plugins
+        if (! $this->is_error($site_env)) {
+            if ($this->has_update($site_env) && $update) {
+                if ('git' == $this->get_connection_info($site_env)) {
+                    $this->set_connection($site_env, 'sftp');
+                }
 
-		//	Update site upstream.
-		if ( $upstream ) {
+                $this->respond('update_plugins_start');
 
-			if ( 'sftp' == $this->get_connection_info( $site_env ) ) {
+                $update_plugins = $this->update_plugins($site_env, $exclude);
 
-				$this->set_connection( $site_env, 'git' );
+                $report['data']['update_plugins'] = $update_plugins;
 
-			}
+                if ($update_plugins) {
+                    $this->respond('update_plugins_finished');
+                } else {
+                    $this->respond('update_plugins_failed');
+                }
+            } elseif (! $update) {
+                $update_list = $this->get_update_list($site_env);
 
-			$this->respond( 'upstream_start' );
+                $report['data']['update_list'] = $update_list;
+            } else {
+                $this->respond('update_plugins_404');
 
-			$update_upstream = $this->update_upstream( $site_env );
+                $report['data']['update_list'] = false;
+            }
+        }
 
-        	if ( $update_upstream ) {
+        // 	Get excluded plugin info
+        if ( $exclude ) {
+        	$excluded_plugins = array();
 
-				$this->respond( 'upstream_stop' );
+			foreach ($exclude as $plugin_name) {
+				$plugin_info = $this->get_plugin_info($site_env, $plugin_name);
 
-				$report['data']['upstream'] = $update_upstream;
-
-        	} else {
-
-        		echo "\n";
-
-				$this->respond( 'upstream_404' );
-
-				$report['data']['upstream'] = 'Upstream update is not available.';
-
-			}
-
-		}
-
-		//	Update site plugins
-		if ( ! $this->is_error( $site_env ) ) {
-
-			if ( $this->has_update( $site_env ) && $update ) {
-
-				if ( 'git' == $this->get_connection_info( $site_env ) ) {
-
-					$this->set_connection( $site_env, 'sftp' );
-					
+				if ( $plugin_info ) {
+		        	$excluded_plugins[] = $plugin_info;
 				}
+        	}        	
 
-				$this->respond( 'update_plugins_start' );
+            $report['data']['excluded_plugins'] = $excluded_plugins;
+        }
 
-				$update_plugins = $this->update_plugins( $site_env, $exclude );
+        //	Commit site changes
+        if (! $this->is_error($site_env) && $auto_commit) {
+            // 	Check for diff
+            $diff = get_object_vars($this->get_diff("$name.dev"));
 
-				$report['data']['update_plugins'] = $update_plugins;
+            if (count($diff) > 0) {
+                $this->respond('commit_changes_start');
 
-				if ( $update_plugins ) {
+                $this->commit_changes($site_env, $auto_commit);
 
-					$this->respond( 'update_plugins_finished' );
+                $this->respond('commit_changes_finished');
 
-				} else {
+                // 	Deploy site
+                if ($auto_deploy) {
+                    $this->respond('deploy_to_test');
 
-					$this->respond( 'update_plugins_failed' );
+                    $deploy = $this->deploy("$name.test", "Deploy to test - $auto_commit");
 
-				}
+                    if ($deploy && ! $this->is_error("$name.test")) {
+                        $this->respond('deployed_to_test');
 
-			} elseif ( ! $update ) {
-
-				$update_list = $this->get_update_list( $site_env );
-
-				$report['data']['update_list'] = $update_list;
-
-			} else {
-				
-				$this->respond( 'update_plugins_404' );
-
-				$report['data']['update_list'] = false;
-
-			}
-
-		}
-
-		//	Commit site changes
-		if ( ! $this->is_error( $site_env ) && $auto_commit ) {
-
-			// 	Check for diff
-			$diff = get_object_vars( $this->get_diff( "$name.test" ) );
-
-			if ( count( $diff ) > 0 ) {
-
-				$this->respond( 'commit_changes_start' );
-
-				$this->commit_changes( $site_env, $auto_commit );
-
-				$this->respond( 'commit_changes_finished' );
-
-				// 	Deploy site
-				if ( $auto_deploy ) {
-
-					$this->respond( 'deploy_to_test' );
-
-					$deploy = $this->deploy( "$name.test", "Deploy to test - $auto_commit" );
-
-					if ( $deploy && ! $this->is_error( "$name.test" ) ) {
-						
-						$this->respond( 'deployed_to_test' );
-
-						/*	@TODO: There might be other alternatives to report.
+                        /*	@TODO: There might be other alternatives to report.
 						 */
-						$report['data']['deploy_to_test'] = 'Deployed to test environment.';
+                        $report['data']['deploy_to_test'] = 'Deployed to test environment.';
 
-						$this->respond( 'deploy_to_live' );
+                        $this->respond('deploy_to_live');
 
-						$deploy = $this->deploy( "$name.live", "Deploy to live - $auto_commit" );
+                        $deploy = $this->deploy("$name.live", "Deploy to live - $auto_commit");
 
-						if ( $deploy && ! $this->is_error( "$name.live" ) ) {
+                        if ($deploy && ! $this->is_error("$name.live")) {
+                            $this->respond('deployed_to_live');
 
-							$this->respond( 'deployed_to_live' );
-
-							/*	@TODO: There might be other alternatives to report.
+                            /*	@TODO: There might be other alternatives to report.
 							 */
-							$report['data']['deploy_to_live'] = 'Deployed to live environment.';
-							
-						} else {
-
-							/*	@TODO: There might be other alternatives to report.
+                            $report['data']['deploy_to_live'] = 'Deployed to live environment.';
+                        } else {
+                            /*	@TODO: There might be other alternatives to report.
 							 */
-							$report['data']['deploy_to_live'] = 'Deploy to live environment failed.';
+                            $report['data']['deploy_to_live'] = 'Deploy to live environment failed.';
 
-							$this->respond( 'deploy_to_live_failed' );
+                            $this->respond('deploy_to_live_failed');
+                        }
+                    } else {
+                        $this->respond('deploy_to_test_failed');
 
-						}
-
-					} else {
-
-						$this->respond( 'deploy_to_test_failed' );
-
-						/*	@TODO: There might be other alternatives to report.
+                        /*	@TODO: There might be other alternatives to report.
 						 */
-						$report['data']['deploy_to_test'] = 'Deploy to test canceled.';
+                        $report['data']['deploy_to_test'] = 'Deploy to test canceled.';
+                    }
+                }
+            } else {
+                $this->respond('commit_changes_none');
 
-					}
+                $report['data']['deploy_to_test'] = 'No changes detected. Nothing to deploy.';
+            }
+        }
 
-				}
+        // 	Change connection to git
+        $this->set_connection($site_env, 'git');
 
-			} else {
-
-				$this->respond( 'commit_changes_none' );
-
-				$report['data']['deploy_to_test'] = 'No changes detected. Nothing to deploy.';
-
-			}
-
-		}
-
-		// 	Change connection to git
-		$this->set_connection( $site_env, 'git' );
-
-		/*	@TODO: checking
+        /*	@TODO: checking
 		var_dump($report);
 		exit;
 		 */
 
-		return $report;
+        return $report;
+    }
 
-	}
-
-	/**
-	 * Get a site's environment.
-	 *
+    /**
+     * Get a site's environment.
+     *
      * @since 1.0.0
-	 */
-	private function get_site_environment( $site_env ) {
+     */
+    private function get_site_environment($site_env)
+    {
 
-		list(, $env) = $this->getSiteEnv( $site_env );
+        list(, $env) = $this->getSiteEnv($site_env);
 
-		return $env;
+        return $env;
+    }
 
-	}
-
-	/**
-	 * Get connection info.
-	 *
+    /**
+     * Get connection info.
+     *
      * @since 1.0.0
-	 */
-	public function get_connection_info( $site_env ) {
+     */
+    public function get_connection_info($site_env)
+    {
 
-		$env = $this->get_site_environment( $site_env );
+        $env = $this->get_site_environment($site_env);
 
-		return $env->serialize()['connection_mode'];
+        return $env->serialize()['connection_mode'];
+    }
 
-	}
-
-	/**
-	 * Set site environment connection mode.
-	 *
+    /**
+     * Set site environment connection mode.
+     *
      * @since 1.0.0
-	 */
-	public function set_connection( $site_env, $mode ) {
+     */
+    public function set_connection($site_env, $mode)
+    {
 
-		$env = $this->get_site_environment( $site_env );
+        $env = $this->get_site_environment($site_env);
 
-		return $env->changeConnectionMode( $mode );
+        return $env->changeConnectionMode($mode);
+    }
 
-	}
-
-	/**
-	 * Get site uncommited changes.
-	 *
+    /**
+     * Get site uncommited changes.
+     *
      * @since 1.0.0
-	 */
-	public function get_diff( $site_env ) {
+     */
+    public function get_diff($site_env)
+    {
 
-		$env = $this->get_site_environment( $site_env );
+        $env = $this->get_site_environment($site_env);
 
-		return $env->diffstat();
+        return $env->diffstat();
+    }
 
-	}
-
-	/**
-	 * Get site uncommited changes.
-	 *
+    /**
+     * Get site uncommited changes.
+     *
      * @since 1.0.0
-	 */
-	public function backup( $site_env, $options = array( 'element' => 'all', 'keep-for' => 365 ) ) {
+     */
+    public function backup($site_env, $options = array( 'element' => 'all', 'keep-for' => 365 ))
+    {
 
-		$env = $this->get_site_environment( $site_env );
+        $env = $this->get_site_environment($site_env);
 
-		$workflow = $env->getBackups()->create($options);
+        $workflow = $env->getBackups()->create($options);
 
-		while ( ! $workflow->checkProgress() ) {
-			echo '.';
-		}
+        while (! $workflow->checkProgress()) {
+            echo '.';
+        }
 
-		echo "\n";
+        echo "\n";
+    }
 
-	}
-
-	/**
-	 * Get site uncommited changes.
-	 *
+    /**
+     * Get site uncommited changes.
+     *
      * @since 1.0.0
-	 */
-	public function update_upstream( $site_name ) {
+     */
+    public function update_upstream($site_name)
+    {
 
-		$env = $this->get_site_environment( $site_name );
+        $env = $this->get_site_environment($site_name);
 
-		$updates = $env->getUpstreamStatus()->getUpdates();
+        $updates = $env->getUpstreamStatus()->getUpdates();
 
-		$logs = property_exists( $updates, 'update_log' ) ? (array)$updates->update_log : array();
+        $logs = property_exists($updates, 'update_log') ? (array)$updates->update_log : array();
 
-		$count = count( $logs );
+        $count = count($logs);
 
-		$updated = false;
+        $updated = false;
 
-		if ( $count ) {
+        if ($count) {
+            try {
+                $workflow = $env->applyUpstreamUpdates(false, true);
 
-			try {
-				
-				$workflow = $env->applyUpstreamUpdates( false, true );
+                while (! $workflow->checkProgress()) {
+                    echo '.';
+                }
 
-				while ( ! $workflow->checkProgress() ) {
-					echo '.';
-				}
+                echo "\n";
 
-				echo "\n";
+                $updated = array();
 
-				$updated = array();
+                foreach ($logs as $log) {
+                    $updated[] = $log;
+                }
+            } catch (TerminusException $e) {
+                $updated = false;
+            }
+        }
 
-				foreach ( $logs as $log ) {
+        return $updated;
+    }
 
-					$updated[] = $log;
-
-				}
-				
-			} catch ( TerminusException $e) {
-				
-				$updated = false;
-
-			}
-
-		}
-
-		return $updated;
-
-	}
-
-	/**
-	 * Check update is available.
-	 *
+    /**
+     * Check update is available.
+     *
      * @since 1.0.0
-	 */
-	public function has_update( $site_env ) {
+     */
+    public function has_update($site_env)
+    {
 
-		$mwu_cli = new \MWU_WPCommand( $this->get_site_environment( $site_env ) );
+        $mwu_cli = new \MWU_WPCommand($this->get_site_environment($site_env));
 
-		return $mwu_cli->has_update();
+        return $mwu_cli->has_update();
+    }
 
-	}
-
-	/**
-	 * Check if site is error.
-	 *
+    /**
+     * Check if site is error.
+     *
      * @since 1.0.0
-	 */
-	public function is_error( $site_env ) {
+     */
+    public function is_error($site_env)
+    {
 
-		/*	@TODO: find a way to debug error.
+        /*	@TODO: find a way to debug error.
 		 */
-		return false;
+        return false;
 
-		$mwu_cli = new \MWU_WPCommand( $this->get_site_environment( $site_env ) );
+        $mwu_cli = new \MWU_WPCommand($this->get_site_environment($site_env));
 
-		return $mwu_cli->is_error();
+        return $mwu_cli->is_error();
+    }
 
-	}
-
-	/**
-	 * Update all plugins in a site.
-	 *
+    /**
+     * Update all plugins in a site.
+     *
      * @since 1.0.0
-	 */
-	public function update_plugins( $site_env, $exclude = false ) {
+     */
+    public function update_plugins($site_env, $exclude = false)
+    {
 
-		$mwu_cli = new \MWU_WPCommand( $this->get_site_environment( $site_env ) );
+        $mwu_cli = new \MWU_WPCommand($this->get_site_environment($site_env));
 
-		$retry_times = 5;
+        $retry_times = 5;
 
-		do {
+        do {
+            $update_response = $mwu_cli->update_plugins($exclude);
 
-			$update_response = $mwu_cli->update_plugins( $exclude );
+            $retry_times--;
+        } while ($mwu_cli->is_timed_out_error($update_response) && $retry_times > 0);
 
-			$retry_times--;
+        return $update_response;
+    }
 
-		} while ( $mwu_cli->is_timed_out_error( $update_response ) && $retry_times > 0 );
-
-		return $update_response;
-
-	}
-
-	/**
-	 * Get all available plugin update in a site.
-	 *
+    /**
+     * Update all plugins in a site.
+     *
      * @since 1.0.0
-	 */
-	public function get_update_list( $site_env ) {
+     */
+    public function get_plugin_info($site_env, $plugin_name)
+    {
 
-		$mwu_cli = new \MWU_WPCommand( $this->get_site_environment( $site_env ) );
+        $mwu_cli = new \MWU_WPCommand($this->get_site_environment($site_env));
 
-		return $mwu_cli->get_update_list();
+        return $mwu_cli->get_plugin_info($plugin_name);
+    }
 
-	}
-
-	/**
-	 * Commit all changes.
-	 *
+    /**
+     * Get all available plugin update in a site.
+     *
      * @since 1.0.0
-	 */
-	public function commit_changes( $site_env, $commit_message ) {
+     */
+    public function get_update_list($site_env)
+    {
 
-		$env = $this->get_site_environment( $site_env );
+        $mwu_cli = new \MWU_WPCommand($this->get_site_environment($site_env));
 
-		$workflow = $env->commitChanges( $commit_message );
+        return $mwu_cli->get_update_list();
+    }
 
-		while ( ! $workflow->checkProgress() ) {
-			echo '.';
-		}
-
-		echo "\n";
-
-		return $workflow->isSuccessful();
-
-	}
-
-	/**
-	 * Deploy to other envs.
-	 *
+    /**
+     * Commit all changes.
+     *
      * @since 1.0.0
-	 */
-	public function deploy( $site_env, $commit_message ) {
+     */
+    public function commit_changes($site_env, $commit_message)
+    {
 
-		$env = $this->get_site_environment( $site_env );
+        $env = $this->get_site_environment($site_env);
 
-		if ( $env->hasDeployableCode() ) {
+        $workflow = $env->commitChanges($commit_message);
 
-			$params = array(
-				'updatedb'    => 1,
-				'clear_cache' => 1,
-				'annotation'  => $commit_message,
-			);
+        while (! $workflow->checkProgress()) {
+            echo '.';
+        }
 
-			$workflow = $env->deploy( $params );
+        echo "\n";
 
-			while ( ! $workflow->checkProgress() ) {
-				echo '.';
-			}
+        return $workflow->isSuccessful();
+    }
 
-			echo "\n";
-
-			return $workflow->isSuccessful();
-
-		}
-
-		$this->respond( 'deploy_failed_none' );
-
-		return false;
-
-	}
-
-	/**
-	 * Get site env urls.
-	 *
+    /**
+     * Deploy to other envs.
+     *
      * @since 1.0.0
-	 */
-	public function get_env_urls( $site_name ) {
+     */
+    public function deploy($site_env, $commit_message)
+    {
 
-		$environments = array( 'dev', 'test', 'live' );
+        $env = $this->get_site_environment($site_env);
 
-		$urls = array();
+        if ($env->hasDeployableCode()) {
+            $params = array(
+                'updatedb'    => 1,
+                'clear_cache' => 1,
+                'annotation'  => $commit_message,
+            );
 
-		foreach ( $environments as $environment ) {
+            $workflow = $env->deploy($params);
 
-			$env = $this->get_site_environment( "$site_name.$environment" );
+            while (! $workflow->checkProgress()) {
+                echo '.';
+            }
 
-			$urls[$environment] = $env->serialize()['domain'];
-			
-		}
+            echo "\n";
 
-		return $urls;
+            return $workflow->isSuccessful();
+        }
 
-	}
+        $this->respond('deploy_failed_none');
 
-	/**
-	 * Print response and return data.
-	 *
+        return false;
+    }
+
+    /**
+     * Get site env urls.
+     *
      * @since 1.0.0
-	 */
-	public function respond( $name, $data = null ) {
+     */
+    public function get_env_urls($site_name)
+    {
 
-		switch ( $name ) {
+        $environments = array( 'dev', 'test', 'live' );
 
-			case 'invalid_site_id':
-				$this->_e( 'Cannot detect a site with said id.', true );
-				break;
+        $urls = array();
 
-			case 'invalid_framework':
-				$this->_e( 'Site is not using WordPress framework.', true );
-				break;
+        foreach ($environments as $environment) {
+            $env = $this->get_site_environment("$site_name.$environment");
 
-			case 'uncommited_changes':
-				$this->_e( "unable to update $data due to pending changes. Commit changes and try again.", true );
-				break;
+            $urls[$environment] = $env->serialize()['domain'];
+        }
 
-			case 'backup_start':
-				$this->_e( "Starting to backup site.", false );
-				break;
+        return $urls;
+    }
 
-			case 'backup_finish':
-				$this->_e( "Backup finished.", true );
-				break;
-
-			case 'upstream_start':
-				$this->_e( "Starting to start upstream update.", false );
-				break;
-
-			case 'upstream_finish':
-				$this->_e( "Upstream update finished.", true );
-				break;
-
-			case 'upstream_404':
-				$this->_e( "Upstream update is not available.", true );
-				break;
-
-			case 'slack_sending':
-				$this->_e( "Sending message to Slack.", true );
-				break;
-
-			case 'slack_sent':
-				$this->_e( "Slack message sent.", true );
-				break;
-
-			case 'slack_not_sent':
-				$this->_e( "Slack message not sent.", true );
-				break;
-
-			case 'update_plugins_start':
-				$this->_e( "Updating site plugins.", true );
-				break;
-				
-			case 'update_plugins_finished':
-				$this->_e( "Site plugins updated.", true );
-				break;
-				
-			case 'update_plugins_failed':
-				$this->_e( "Failed to update site plugins.", true );
-				break;
-				
-			case 'update_plugins_404':
-				$this->_e( "No available updates found.", true );
-				break;
-				
-			case 'commit_changes_start':
-				$this->_e( "Commiting changes on site.", false );
-				break;
-				
-			case 'commit_changes_finished':
-				$this->_e( "Changes commited.", true );
-				break;
-				
-			case 'commit_changes_none':
-				$this->_e( "No changes detected.", true );
-				break;
-				
-			case 'deploy_failed_none':
-				$this->_e( "Deploy canceled. No codes to deploy.", true );
-				break;
-
-			case 'deploy_to_test':
-				$this->_e( "Deploying changes to test env.", false );
-				break;
-
-			case 'deploy_to_live':
-				$this->_e( "Deploying changes to live env.", false );
-				break;
-
-			case 'deployed_to_test':
-				$this->_e( "Deployed changes to test env.", true );
-				break;
-
-			case 'deployed_to_live':
-				$this->_e( "Deployed changes to live env.", true );
-				break;
-
-			case 'deploy_to_test_failed':
-				$this->_e( "Failed to deploy changes to test env.", true );
-				break;
-
-			case 'deploy_to_live_failed':
-				$this->_e( "Failed to deploy changes to live env.", true );
-				break;
-
-			case 'message_report':
-				$new_data = "";
-				if ( $data ) {
-					$new_data = "```\n";
-					foreach ( $data as $type => $value ) {
-						switch ( $type ) {
-							case 'backup':
-								$new_data .= "=> $value\n";
-								break;
-							case 'update_plugins':
-								if ( $value ) {
-									$new_data .= "=> Plugins update:\n";
-									foreach ( $value as $key => $updated ) {
-										$new_data .= '   [ ' . $this->format_version( $updated->old_version ) . ' ] -> [ ' . $this->format_version( $updated->new_version ) . ' ]    ' . $updated->name;
-										if ( 'Error' === $updated->status ) {
-											$new_data .=  '    ERROR';
-										}
-										$new_data .= "\n";
-									}
-								} else {
-									$new_data .= "=> No available plugin updates.\n";
-								}
-								break;
-							case 'update_list':
-								if ( $value ) {
-									$new_data .= "=> Available plugin updates:\n";
-									foreach ( $value as $key => $plugin ) {
-										$new_data .= '   [ ' . $this->format_version( $plugin->version ) . ' ] -> [ ' . $this->format_version( $plugin->update_version ) . ' ]    ' . $plugin->name . ' | Package: ' . ( $plugin->update_package ? 'available' : 'not available' );
-										$new_data .= "\n";
-									}
-								} else {
-									$new_data .= "=> No available plugin updates.\n";
-								}
-								break;
-							case 'upstream':
-								$new_data .= "=> Updated site upstream.\n";
-								if ( $value ) {
-									foreach ( $value as $log ) {
-										$new_data .= '   [ ' . $log->author . ' ] ' . $log->message;
-										$new_data .= "\n";
-									}
-								}
-								break;
-							case 'deploy_to_test':
-								$new_data .= "=> $value\n";
-								break;
-							case 'deploy_to_live':
-								$new_data .= "=> $value\n";
-								break;
-						}
-					}
-					$new_data .= "```";
-				}
-				$data = $new_data;
-				break;
-
-		}
-
-		return $data;
-
-	}
-
-	/**
-	 * Print message.
-	 *
+    /**
+     * Print response and return data.
+     *
      * @since 1.0.0
-	 */
-	public function _e( $message, $newline ) {
+     */
+    public function respond($name, $data = null)
+    {
 
-		$_message = '=> ';
+        switch ($name) {
+            case 'invalid_site_id':
+                $this->_e('Cannot detect a site with said id.', true);
+                break;
 
-		$_message .= $message;
+            case 'invalid_framework':
+                $this->_e('Site is not using WordPress framework.', true);
+                break;
 
-		$_message .= ( $newline ? "\n" : '' );
+            case 'uncommited_changes':
+                $this->_e("unable to update $data due to pending changes. Commit changes and try again.", true);
+                break;
 
-		echo $_message;
+            case 'backup_start':
+                $this->_e("Starting to backup site.", false);
+                break;
 
-	}
+            case 'backup_finish':
+                $this->_e("Backup finished.", true);
+                break;
 
-	/**
-	 * Send report to Slack.
-	 *
+            case 'upstream_start':
+                $this->_e("Starting to start upstream update.", false);
+                break;
+
+            case 'upstream_finish':
+                $this->_e("Upstream update finished.", true);
+                break;
+
+            case 'upstream_404':
+                $this->_e("Upstream update is not available.", true);
+                break;
+
+            case 'slack_sending':
+                $this->_e("Sending message to Slack.", true);
+                break;
+
+            case 'slack_sent':
+                $this->_e("Slack message sent.", true);
+                break;
+
+            case 'slack_not_sent':
+                $this->_e("Slack message not sent.", true);
+                break;
+
+            case 'update_plugins_start':
+                $this->_e("Updating site plugins.", true);
+                break;
+                
+            case 'update_plugins_finished':
+                $this->_e("Site plugins updated.", true);
+                break;
+                
+            case 'update_plugins_failed':
+                $this->_e("Failed to update site plugins.", true);
+                break;
+                
+            case 'update_plugins_404':
+                $this->_e("No available updates found.", true);
+                break;
+                
+            case 'commit_changes_start':
+                $this->_e("Commiting changes on site.", false);
+                break;
+                
+            case 'commit_changes_finished':
+                $this->_e("Changes commited.", true);
+                break;
+                
+            case 'commit_changes_none':
+                $this->_e("No changes detected.", true);
+                break;
+                
+            case 'deploy_failed_none':
+                $this->_e("Deploy canceled. No codes to deploy.", true);
+                break;
+
+            case 'deploy_to_test':
+                $this->_e("Deploying changes to test env.", false);
+                break;
+
+            case 'deploy_to_live':
+                $this->_e("Deploying changes to live env.", false);
+                break;
+
+            case 'deployed_to_test':
+                $this->_e("Deployed changes to test env.", true);
+                break;
+
+            case 'deployed_to_live':
+                $this->_e("Deployed changes to live env.", true);
+                break;
+
+            case 'deploy_to_test_failed':
+                $this->_e("Failed to deploy changes to test env.", true);
+                break;
+
+            case 'deploy_to_live_failed':
+                $this->_e("Failed to deploy changes to live env.", true);
+                break;
+
+            case 'message_report':
+                $new_data = "";
+                if ($data) {
+                    $new_data = "```\n";
+                    foreach ($data as $type => $value) {
+                        switch ($type) {
+                            case 'backup':
+                                $new_data .= "=> $value\n";
+                                break;
+                            case 'update_plugins':
+                                if ($value) {
+                                    $new_data .= "=> Plugins update:\n";
+                                    foreach ($value as $key => $updated) {
+                                        $new_data .= '   [ ' . $this->format_version($updated->old_version) . ' ] -> [ ' . $this->format_version($updated->new_version) . ' ]    ' . $updated->name;
+                                        if ('Error' === $updated->status) {
+                                            $new_data .=  '    ERROR';
+                                        }
+                                        $new_data .= "\n";
+                                    }
+                                } else {
+                                    $new_data .= "=> No available plugin updates.\n";
+                                }
+                                break;
+                            case 'update_list':
+                                if ($value) {
+                                    $new_data .= "=> Available plugin updates:\n";
+                                    foreach ($value as $key => $plugin) {
+                                        $new_data .= '   [ ' . $this->format_version($plugin->version) . ' ] -> [ ' . $this->format_version($plugin->update_version) . ' ]    ' . $plugin->name . ' | Package: ' . ( $plugin->update_package ? 'available' : 'not available' );
+                                        $new_data .= "\n";
+                                    }
+                                } else {
+                                    $new_data .= "=> No available plugin updates.\n";
+                                }
+                                break;
+                            case 'excluded_plugins':
+                                if ($value) {
+                                    $new_data .= "=> Excluded plugin updates:\n";
+                                    foreach ($value as $key => $plugin) {
+                                        $new_data .= '   [ ' . $this->format_version($plugin->version) . ' ]    ' . $plugin->name;
+                                        $new_data .= "\n";
+                                    }
+                                } else {
+                                    $new_data .= "=> No available plugin updates.\n";
+                                }
+                                break;
+                            case 'upstream':
+                                if ($value && is_array($value)) {
+	                                $new_data .= "=> Updated site upstream.\n";
+                                    foreach ($value as $log) {
+                                        $new_data .= '   [ ' . $log->author . ' ] ' . $log->message;
+                                        $new_data .= "\n";
+                                    }
+                                } else {
+	                                $new_data .= "=> Upstream update is not available.\n";
+                                }
+                                break;
+                            case 'deploy_to_test':
+                                $new_data .= "=> $value\n";
+                                break;
+                            case 'deploy_to_live':
+                                $new_data .= "=> $value\n";
+                                break;
+                        }
+                    }
+                    $new_data .= "```";
+                }
+                $data = $new_data;
+                break;
+        }
+
+        return $data;
+    }
+
+    /**
+     * Print message.
+     *
      * @since 1.0.0
-	 */
-	public function send_to_slack( $queue, $report ) {
+     */
+    public function _e($message, $newline)
+    {
 
-		$payload = array();
+        $_message = '=> ';
 
-		// 	send message
-		$message_report = $this->respond( 'message_report', $report['data'] );
-		$message = "*Terminus update report on " . $queue['name'] . "*\n" . $message_report;
-		$color = ( $report['error'] ? '#dd0d0d' : '#2f2cba' );
-		$name = $queue['name'];
-		$date = new \DateTime();
-		$env_urls = $this->get_env_urls( $name );
+        $_message .= $message;
 
-		$payload = array(
-			'username'		=> $this->slack_settings['username'],
-			// 'channel'		=> $this->slack_settings['channel'],
-			'icon_emoji'	=> ':' . $this->slack_settings['icon_emoji'] . ':',
-			'text'			=> $message,
-			'mrkdwn'		=> true,
-			'attachments'	=> array( 
-				array(
-					'fallback'		=> 'Terminus MWU message.',
-					'color'			=> $color,
-					'author_name'	=> $name,
-					'fields'		=> array(
-							array(
-								'title'		=> 'Dashboard',
-								'value'		=> "<https://dashboard.pantheon.io/sites/$name|dashboard.pantheon.io>",
-								'short'		=> true
-							),
-							array(
-								'title'		=> 'Dev',
-								'value'		=> ( isset( $env_urls['dev'] ) ? $env_urls['dev'] : 'undefined' ),
-								'short'		=> true
-							),
-							array(
-								'title'		=> 'Test',
-								'value'		=> ( isset( $env_urls['test'] ) ? $env_urls['test'] : 'undefined' ),
-								'short'		=> true
-							),
-							array(
-								'title'		=> 'Live',
-								'value'		=> ( isset( $env_urls['live'] ) ? $env_urls['live'] : 'undefined' ),
-								'short'		=> true
-							),
-					),
-					'footer'		=> 'Update time: ',
-					'footer_icon'	=> 'https://platform.slack-edge.com/img/default_application_icon.png',
-					'ts'			=> $date->getTimestamp()
-				),
-				array(
-					'text'				=> 'Available Actions',
-					'fallback'			=> 'Zeus is not here at the moment.',
-					'callback_id'		=> 'zeus_commands',
-					'color'				=> '#3AA3E3',
-					'attachment_type'	=> 'default',
-					'actions'			=> array(
-						array(
-							'name'			=> 'command',
-							'text'			=> 'Update',
-							'type'			=> 'button',
-							'value'			=> 'update',
-						),
-					),
-				),
-			),
-		);
+        $_message .= ( $newline ? "\n" : '' );
 
-		//	Send to specific user
-		if ( isset( $queue['notifications'] ) ) {
+        echo $_message;
+    }
 
-			if ( $report['error'] && isset( $queue['notifications']['error'] ) ) {
-
-				foreach ( $queue['notifications']['error'] as $username ) {
-
-					$payload_error = $payload;
-
-					$payload_error['channel'] = "@$username";
-
-					$slack = simple_slack( $this->slack_settings['url'], $payload_error );
-
-					$slack->send();
-					
-				}
-
-			}
-
-			if ( isset( $queue['notifications']['updated'] ) ) {
-
-				foreach ( $queue['notifications']['updated'] as $username ) {
-
-					$payload_updated = $payload;
-
-					$payload_updated['channel'] = "@$username";
-
-					$slack = simple_slack( $this->slack_settings['url'], $payload_updated );
-
-					$slack->send();
-					
-				}
-
-			}
-
-			if ( isset( $queue['notifications']['report'] ) ) {
-
-				foreach ( $queue['notifications']['report'] as $username ) {
-
-					$payload_report = $payload;
-
-					$payload_report['channel'] = "@$username";
-
-					$slack = simple_slack( $this->slack_settings['url'], $payload_report );
-
-					$slack->send();
-					
-				}
-
-			}
-
-		}
-
-		//	Send to channel
-		$slack = simple_slack( $this->slack_settings['url'], $payload );
-
-		return $slack->send();
-
-	}
-
-	/**
-	 * Reformat version.
-	 *
+    /**
+     * Send report to Slack.
+     *
      * @since 1.0.0
-	 */
-	function format_version( $version ) {
+     */
+    public function send_to_slack($queue, $report)
+    {
 
-		$trimmed = substr( $version, 0, 5 );
+        $payload = array();
 
-		$count = strlen( $trimmed );
+        // 	send message
+        $message_report = $this->respond('message_report', $report['data']);
+        $message = "*Terminus update report on " . $queue['name'] . "*\n" . $message_report;
+        $color = ( $report['error'] ? '#dd0d0d' : '#2f2cba' );
+        $name = $queue['name'];
+        $date = new \DateTime();
+        $env_urls = $this->get_env_urls($name);
 
-		if ( $count < 5 ) {
+        $payload = array(
+            'username'      => $this->slack_settings['username'],
+            // 'channel'		=> $this->slack_settings['channel'],
+            'icon_emoji'    => ':' . $this->slack_settings['icon_emoji'] . ':',
+            'text'          => $message,
+            'mrkdwn'        => true,
+            'attachments'   => array(
+                array(
+                    'fallback'      => 'Terminus MWU message.',
+                    'color'         => $color,
+                    'author_name'   => $name,
+                    'fields'        => array(
+                            array(
+                                'title'     => 'Dashboard',
+                                'value'     => "<https://dashboard.pantheon.io/sites/$name|dashboard.pantheon.io>",
+                                'short'     => true
+                            ),
+                            array(
+                                'title'     => 'Dev',
+                                'value'     => ( isset($env_urls['dev']) ? $env_urls['dev'] : 'undefined' ),
+                                'short'     => true
+                            ),
+                            array(
+                                'title'     => 'Test',
+                                'value'     => ( isset($env_urls['test']) ? $env_urls['test'] : 'undefined' ),
+                                'short'     => true
+                            ),
+                            array(
+                                'title'     => 'Live',
+                                'value'     => ( isset($env_urls['live']) ? $env_urls['live'] : 'undefined' ),
+                                'short'     => true
+                            ),
+                    ),
+                    'footer'        => 'Update time: ',
+                    'footer_icon'   => 'https://platform.slack-edge.com/img/default_application_icon.png',
+                    'ts'            => $date->getTimestamp()
+                ),
+                array(
+                    'text'              => 'Available Actions',
+                    'fallback'          => 'Zeus is not here at the moment.',
+                    'callback_id'       => 'zeus_commands',
+                    'color'             => '#3AA3E3',
+                    'attachment_type'   => 'default',
+                    'actions'           => array(
+                        array(
+                            'name'          => 'command',
+                            'text'          => 'Update',
+                            'type'          => 'button',
+                            'value'         => 'update',
+                        ),
+                    ),
+                ),
+            ),
+        );
 
-			$trimmed .= '.0';
+        //	Send to specific user
+        if (isset($queue['notifications'])) {
+            if ($report['error'] && isset($queue['notifications']['error'])) {
+                foreach ($queue['notifications']['error'] as $username) {
+                    $payload_error = $payload;
 
-		}
+                    $payload_error['channel'] = "@$username";
 
-		return $trimmed;
+                    $slack = simple_slack($this->slack_settings['url'], $payload_error);
 
-	}
+                    $slack->send();
+                }
+            }
 
-	/**
-	 * Load supporting files.
-	 *
+            if (isset($queue['notifications']['updated'])) {
+                foreach ($queue['notifications']['updated'] as $username) {
+                    $payload_updated = $payload;
+
+                    $payload_updated['channel'] = "@$username";
+
+                    $slack = simple_slack($this->slack_settings['url'], $payload_updated);
+
+                    $slack->send();
+                }
+            }
+
+            if (isset($queue['notifications']['report'])) {
+                foreach ($queue['notifications']['report'] as $username) {
+                    $payload_report = $payload;
+
+                    $payload_report['channel'] = "@$username";
+
+                    $slack = simple_slack($this->slack_settings['url'], $payload_report);
+
+                    $slack->send();
+                }
+            }
+        }
+
+        //	Send to channel
+        $slack = simple_slack($this->slack_settings['url'], $payload);
+
+        return $slack->send();
+    }
+
+    /**
+     * Reformat version.
+     *
      * @since 1.0.0
-	 */
-	public function load_helpers() {
+     */
+    function format_version($version)
+    {
 
-		require( 'lib/lib-Spyc.php' );
-		require( 'lib/lib-Simple_Slack.php' );
-		require( 'lib/lib-WPCommand.php' );
+        $trimmed = substr($version, 0, 5);
 
-	}
+        $count = strlen($trimmed);
 
+        if ($count < 5) {
+            $trimmed .= '.0';
+        }
+
+        return $trimmed;
+    }
+
+    /**
+     * Load supporting files.
+     *
+     * @since 1.0.0
+     */
+    public function load_helpers()
+    {
+
+        require('lib/lib-Spyc.php');
+        require('lib/lib-Simple_Slack.php');
+        require('lib/lib-WPCommand.php');
+    }
 }

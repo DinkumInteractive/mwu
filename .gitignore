@@ -6,6 +6,10 @@ sites-test.yml
 ############
 composer.lock
 vendor
+bats
+bin
+libexec
+share
 
 # License #
 ############

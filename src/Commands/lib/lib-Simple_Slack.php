@@ -1,116 +1,126 @@
-<?php 
+<?php
 
-if ( class_exists( 'Simple_Slack' ) ) return;
+if (class_exists('Simple_Slack')) {
+    return;
+}
 
-class Simple_Slack {
+class Simple_Slack
+{
 
-	private $url = false;
+    private $url = false;
 
-	protected $post = array();
+    protected $post = array();
 
-	public function __construct( $post ) {
+    public function __construct($post)
+    {
 
-		if ( ! $post ) return $this;
+        if (! $post) {
+            return $this;
+        }
 
-		$this->post = $post;
+        $this->post = $post;
+    }
 
-	}
+    public function __get($key)
+    {
 
-	public function __get( $key ) {
+        return $this->post[ $key ];
+    }
 
-		return $this->post[ $key ];
+    public function __set($key, $value)
+    {
 
-	}
+        $this->post[ $key ] = $value;
 
-	public function __set( $key, $value ) {
+        return $this;
+    }
 
-		$this->post[ $key ] = $value;
+    public function set_url($url)
+    {
 
-		return $this;
+        $this->url = $url;
 
-	}
+        return $this;
+    }
 
-	public function set_url( $url ) {
+    public function set_post($post)
+    {
 
-		$this->url = $url;
+        $this->post = $post;
 
-		return $this;
+        return $this;
+    }
 
-	}
+    public function set_attachment($attachment)
+    {
 
-	public function set_post( $post ) {
+        $this->post['attachment'] = $attachments;
 
-		$this->post = $post;
+        return $this;
+    }
 
-		return $this;
+    public function get_attachment($key)
+    {
 
-	}
+        if (! isset($this->post['attachment'][$key])) {
+            return null;
+        }
 
-	public function set_attachment( $attachment ) {
+        return $this->post['attachment'][$key];
+    }
 
-		$this->post['attachment'] = $attachments;
+    public function send()
+    {
 
-		return $this;
+        if (! $this->url) {
+            return;
+        }
 
-	}
+        if (! $this->post) {
+            return;
+        }
 
-	public function get_attachment( $key ) {
+        $post = $this->post;
 
-		if ( ! isset( $this->post['attachment'][$key] ) ) return null;
+        $payload = json_encode($post);
 
-		return $this->post['attachment'][$key];
+        $ch = curl_init();
 
-	}
+        curl_setopt($ch, CURLOPT_URL, $this->url);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
 
-	public function send() {
+        $result = curl_exec($ch);
 
-		if ( ! $this->url ) return;
+        // Check if any error occurred
+        if (curl_errno($ch)) {
+            //	Curl error | https://curl.haxx.se/libcurl/c/libcurl-errors.html
+            echo 'Curl error: ' . curl_error($ch);
+        }
 
-		if ( ! $this->post ) return;
+        $payload_pretty = json_encode($post, JSON_PRETTY_PRINT);
 
-		$post = $this->post;
-
-		$payload = json_encode( $post );
-
-		$ch = curl_init();
-
-		curl_setopt( $ch, CURLOPT_URL, $this->url );
-		curl_setopt( $ch, CURLOPT_POST, 1 );
-		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
-		curl_setopt( $ch, CURLOPT_TIMEOUT, 60 );
-		curl_setopt( $ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json') );
-		curl_setopt( $ch, CURLOPT_POSTFIELDS, $payload );
-
-		$result = curl_exec( $ch );
-
-		// Check if any error occurred
-		if ( curl_errno( $ch ) ) {
-			//	Curl error | https://curl.haxx.se/libcurl/c/libcurl-errors.html
-			echo 'Curl error: ' . curl_error( $ch );
-		}
-
-		$payload_pretty = json_encode($post,JSON_PRETTY_PRINT); 
-
-		/*	Uncomment to debug
+        /*	Uncomment to debug
 			var_dump($payload_pretty);
 			var_dump($result);
 		 */
 
-		curl_close( $ch );
+        curl_close($ch);
 
-		return $result;
-
-	}
-
+        return $result;
+    }
 }
 
 
-function simple_slack( $url, $post ) {
+function simple_slack($url, $post)
+{
 
-	$slack = new Simple_Slack( $post );
+    $slack = new Simple_Slack($post);
 
-	$slack->set_url( $url );
+    $slack->set_url($url);
 
-	return $slack;
-
+    return $slack;
 }

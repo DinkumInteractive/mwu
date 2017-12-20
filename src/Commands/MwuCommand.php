@@ -74,12 +74,6 @@ class MwuCommand extends SiteCommand
         // 	Load helpers.
         $this->load_helpers();
 
-        /*  @TODO:
-			- test all functions
-			- check all response
-		exit;
-		 */
-
         //	Create queue with either yml config or command options.
         $this->queue = ( $sites_config ? $this->create_queue($sites_config) : $this->create_queue($options) );
 
@@ -195,7 +189,9 @@ class MwuCommand extends SiteCommand
 
         // 	Site and environment
         $site_env = "$name.$env";
+        
         $site = $this->sites->get($name);
+
         $info = $site->serialize();
 
         // 	Check if site uses WordPress
@@ -422,6 +418,38 @@ class MwuCommand extends SiteCommand
         $env = $this->get_site_environment($site_env);
 
         return $env->diffstat();
+    }
+
+    /**
+     * Get site dashboard url.
+     *
+     * @since 1.0.0
+     */
+    public function get_dashboard_url($site_env)
+    {
+
+        $env = $this->get_site_environment($site_env);
+
+        return $env->dashboardUrl();
+    }
+
+    /**
+     * Get site dashboard url.
+     *
+     * @since 1.0.0
+     */
+    public function get_screenshot_url($name,$env)
+    {
+
+        $env = $this->get_site_environment("$name.$env");
+        
+        $env->clearCache();
+
+        $site = $this->sites->get($name);
+
+        $url = 'https://dsvtten8xijg8.cloudfront.net/dev/'. $site->id . '.jpg';
+
+        return $url;
     }
 
     /**
@@ -847,63 +875,60 @@ class MwuCommand extends SiteCommand
 
         // 	send message
         $message_report = $this->respond('message_report', $report['data']);
-        $message = "*Terminus update report on " . $queue['name'] . "*\n" . $message_report;
-        $color = ( $report['error'] ? '#dd0d0d' : '#2f2cba' );
+        $title = "Terminus update report on " . $queue['name'];
+        $message = $message_report;
+        $color1 = ( $report['error'] ? '#dd0d0d' : '#117bf3' );
+        $color2 = 'ffb305';
         $name = $queue['name'];
         $date = new \DateTime();
         $env_urls = $this->get_env_urls($name);
 
         $payload = array(
             'username'      => $this->slack_settings['username'],
-            // 'channel'		=> $this->slack_settings['channel'],
             'icon_emoji'    => ':' . $this->slack_settings['icon_emoji'] . ':',
-            'text'          => $message,
+            // 'text'          => "*$title*\n" . $this->get_screenshot_url($name,'dev'),
+            'text'          => "*$title*\n",
             'mrkdwn'        => true,
             'attachments'   => array(
                 array(
-                    'fallback'      => 'Terminus MWU message.',
-                    'color'         => $color,
-                    'author_name'   => $name,
+                    'color'         => $color2,
+                    // 'author_name'	=> 'pantheon site - ' . $name,
                     'fields'        => array(
                             array(
                                 'title'     => 'Dashboard',
-                                'value'     => "<https://dashboard.pantheon.io/sites/$name|dashboard.pantheon.io>",
+                                'value'     => '<' . $this->get_dashboard_url("$name.dev") . '|dashboard.pantheonsite.io>',
                                 'short'     => true
                             ),
-                            array(
-                                'title'     => 'Dev',
-                                'value'     => ( isset($env_urls['dev']) ? $env_urls['dev'] : 'undefined' ),
-                                'short'     => true
-                            ),
-                            array(
-                                'title'     => 'Test',
-                                'value'     => ( isset($env_urls['test']) ? $env_urls['test'] : 'undefined' ),
-                                'short'     => true
-                            ),
+                            // array(
+                            //     'title'     => 'Dev',
+                            //     'value'     => ( isset($env_urls['dev']) ? $env_urls['dev'] : 'undefined' ),
+                            //     'short'     => true
+                            // ),
+                            // array(
+                            //     'title'     => 'Test',
+                            //     'value'     => ( isset($env_urls['test']) ? $env_urls['test'] : 'undefined' ),
+                            //     'short'     => true
+                            // ),
                             array(
                                 'title'     => 'Live',
                                 'value'     => ( isset($env_urls['live']) ? $env_urls['live'] : 'undefined' ),
                                 'short'     => true
                             ),
                     ),
-                    'footer'        => 'Update time: ',
-                    'footer_icon'   => 'https://platform.slack-edge.com/img/default_application_icon.png',
-                    'ts'            => $date->getTimestamp()
+                    // 'footer'        => 'Update time: ',
+                    // 'footer_icon'   => 'https://platform.slack-edge.com/img/default_application_icon.png',
+                    // 'ts'            => $date->getTimestamp()
                 ),
                 array(
-                    'text'              => 'Available Actions',
-                    'fallback'          => 'Zeus is not here at the moment.',
-                    'callback_id'       => 'zeus_commands',
-                    'color'             => '#3AA3E3',
-                    'attachment_type'   => 'default',
-                    'actions'           => array(
-                        array(
-                            'name'          => 'command',
-                            'text'          => 'Update',
-                            'type'          => 'button',
-                            'value'         => 'update',
-                        ),
-                    ),
+                    'color'         => $color1,
+                    // 'author_name'   => 'terminus mwu - ' . $name,
+                    'title'         => 'Updates Log',
+                    'text'          => $message,
+                    'mrkdwn_in'     => array( 'text' ),
+                    'footer'        => 'Update time: ',
+                    'footer_icon'   => 'https://platform.slack-edge.com/img/default_application_icon.png',
+                    'ts'            => $date->getTimestamp(),
+                    'image_url'     => $this->get_screenshot_url($name,'dev'),
                 ),
             ),
         );

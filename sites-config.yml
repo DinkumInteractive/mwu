@@ -1,112 +1,32 @@
 slack_settings:
-  username: zeus
-  icon_emoji: pantheon
-  url: https://hooks.slack.com/services/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
-  # url: https://hooks.slack.com/services/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
-  # url: https://hooks.slack.com/services/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
+  username: slack-user-name
+  icon_emoji: icon-for-chat
+  url: https://hooks.slack.com/services/XXXXXXXXX/XXXXXXXXX/XXXXXXXXXXXXXXXXXXXXXXXX
   notifications:
-    error:
-      - emiliano
-      - sean_michael
-      - memo
+    updated:
+      - user-slack-1
+      - user-slack-2
 sites:
   settings:
       env: dev
       upstream: true
       update: true
-      auto_commit: 'Commited by MWU'
-      backup: false
+      auto_commit: true
+      backup: true
       auto_deploy: true
       exclude:
-        - advanced-custom-fields-pro
+        - plugin-name
   update:
-    # - name: actionaid
-    #   upstream: false
-    #   update: false
-    #   auto_deploy: false
-    #   notifications:
-    #     report:
-    #       - sean_michael
-    #       - memo
-    #       - kyoung
-    # - name: adoptioninstitute
-    # - name: americas-grow-a-row
-    # - name: ampa-maria-lluisa
-    #   auto_deploy: false
-    #   notifications:
-    #     update:
-    #       - rahman
-    #       - sean_michael
-    # - name: antspantscafe
-    # - name: be-cool-roof-coatings
-    # - name: believe-in-birth
-    # # - name: benjamin-shwartz
-    # # - name: bergen-academy
-    # - name: bespc
-    #   auto_deploy: false
-    # - name: brian-kershner
-    # - name: building-strong-families-ny
-    # - name: c3i-solutions
-    # # - name: c3ihc
-    # - name: camdenhealth
-    # - name: carie
-    # - name: center-for-study-abroad
-    # - name: courtney-kurt
-    # - name: csfphiladelphia
-    # - name: di-wiki
-    # - name: dinkuminteractive
-    # - name: family-promis-egc
-    # # - name: fenix-leadership-consulting
-    # - name: fun-cloth-crafts
-    #   auto_deploy: false
-    # - name: ginger-huebner
-    # - name: global-initiatives
-    # - name: good-care-collaborative
-    # - name: grant-vantage
-    # - name: great-prospects-sales-leads
-    # - name: gttp
-    # # - name: hawaiinmsf
-    # # - name: hiline-coffee
-    # #   auto_deploy: false
-    # - name: historic-golf-photos
-    #   auto_deploy: false
-    # - name: hot-spotting-camdenhealth
-    # # - name: ihrfg
-    # - name: impact100
-    #   notifications:
-    #     update:
-    #       - kyoung
-    #       - sean_michael
-    # - name: ldger
-    # - name: lets-adopt-reform
-    # - name: little-hero-capes
-    # # - name: marinesanctuary
-    # - name: marlboro-intranet
-    # - name: mchvf
-    # - name: merchantplus
-    # - name: merchants-fund
-    # - name: msfc
-    # - name: noc-noc
-    # - name: pcms-concerts
-    # # - name: political-islam
-    - name: potomac-laser
-    # - name: pride-garden-products
-    # - name: prismquartet
-    # - name: rapidlearninginstitute
-    # - name: retailterminals
-    # # - name: ribbon-resource
-    # - name: rjo
-    # # - name: site-mavens
-    # - name: stopcorporateabuse
-    #   upstream: false
-    #   update: false
-    #   auto_deploy: false
-    #   notifications:
-    #     report:
-    #       - sean_michael
-    #       - memo
-    #       - kyoung
-    # - name: tabithausa
-    # - name: tbs-online
-    # - name: tern-commerce
-    # - name: the-philadelphia-brass
+    - name: test-site-1
+      notifications:
+        report:
+          - user-slack-3
+        updated:
+          - user-slack-3
+          - user-slack-4
+    - name: test-site-2
+    - name: test-site-3
+      notifications:
+        error:
+          - user-slack-5
+          - user-slack-6

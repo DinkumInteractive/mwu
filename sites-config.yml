@@ -16,6 +16,7 @@ sites:
       auto_deploy: true
       exclude:
         - plugin-name
+      major_update: false
   update:
     - name: test-site-1
       notifications:

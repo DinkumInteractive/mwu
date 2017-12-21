@@ -52,25 +52,27 @@ class MWU_WPCommand
 
         $plugins = $this->get_plugin_list();
 
-        foreach ($plugins as $plugin) {
-            if ($plugin_name) {
-                if ('available' === $plugin->update &&
-                    $plugin->update_package &&
-                    'none' != $plugin->update_package &&
-                    'active' === $plugin->status &&
-                    $plugin_name === $plugin->name
-                ) {
-                    return true;
-                }
-            } else {
-                if ('available' === $plugin->update &&
-                    $plugin->update_package &&
-                    'none' != $plugin->update_package &&
-                    'active' === $plugin->status
-                ) {
-                    $has_update = true;
+        if ($plugins) {
+            foreach ($plugins as $plugin) {
+                if ($plugin_name) {
+                    if ('available' === $plugin->update &&
+                        $plugin->update_package &&
+                        'none' != $plugin->update_package &&
+                        'active' === $plugin->status &&
+                        $plugin_name === $plugin->name
+                    ) {
+                        return true;
+                    }
+                } else {
+                    if ('available' === $plugin->update &&
+                        $plugin->update_package &&
+                        'none' != $plugin->update_package &&
+                        'active' === $plugin->status
+                    ) {
+                        $has_update = true;
 
-                    break;
+                        break;
+                    }
                 }
             }
         }
@@ -85,10 +87,12 @@ class MWU_WPCommand
 
         $plugins = $this->get_plugin_list();
 
-        foreach ($plugins as $plugin) {
-            if ('available' === $plugin->update) {
-                $update_list[] = $plugin;
-            }
+        if ( $plugins ) {
+	        foreach ($plugins as $plugin) {
+	            if ('available' === $plugin->update) {
+	                $update_list[] = $plugin;
+	            }
+	        }
         }
 
         return $update_list;
@@ -102,12 +106,14 @@ class MWU_WPCommand
         $result = $this->run($command, true);
     }
 
-    public function update_plugins($exclude = false)
+    public function update_plugins($exclude = false, $major = false)
     {
 
         $exclude = ( $exclude ? implode(',', $exclude) : '' );
 
-        $command = "wp plugin update --all --format=json --exclude=$exclude";
+        $major = ( $major ? '' : '--minor' );
+
+        $command = "wp plugin update --all --format=json --exclude=$exclude $major";
 
         $result = $this->run($command, true);
 
@@ -151,5 +157,34 @@ class MWU_WPCommand
         }
 
         return $response;
+    }
+
+    public function get_major_update()
+    {
+
+        $major_update_list = array();
+
+        $update_list = $this->get_update_list();
+
+        if ($update_list) {
+            foreach ($update_list as $update) {
+                $version = $update->version;
+                $update_version = $update->update_version;
+                $major_update = $this->major_version_compare($version, $update_version);
+
+                if ($major_update) {
+                    $major_update_list[] = $update;
+                }
+            }
+        }
+
+        return $major_update_list;
+    }
+
+    public function major_version_compare($old_version, $new_version)
+    {
+        $old_version = intval(( strpos($old_version, '.') === false ? $old_version : strstr($old_version, '.', true) ));
+        $new_version = intval(( strpos($new_version, '.') === false ? $new_version : strstr($new_version, '.', true) ));
+        return ( $new_version > $old_version ? true : false );
     }
 }

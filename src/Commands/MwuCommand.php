@@ -21,11 +21,12 @@ class MwuCommand extends SiteCommand
     const options_default = array(
         'name'              => '',
         'env'               => 'dev',
-        'backup'            => 'all|code|files|database|db',
+        'backup'            => '', // all|code|files|database|db
         'upstream'          => false,
         'update'            => true,
         'auto_commit'       => 'Site updated by MWU.',
         'auto_deploy'       => false,
+        'major_update'      => false,
     );
 
     /**
@@ -175,12 +176,13 @@ class MwuCommand extends SiteCommand
         $name = $args['name'];
         $env = $args['env'];
         $upstream = $args['upstream'];
-        $update = $args['update'];
+        $update = filter_var($args['update'], FILTER_VALIDATE_BOOLEAN);
         $exclude = ( isset($args['exclude']) ? $args['exclude'] : false );
         $auto_commit = $args['auto_commit'];
         $backup = $args['backup'];
         $auto_deploy = $args['auto_deploy'];
         $report = array( 'error' => false, 'data' => false );
+        $major_update = ( isset($args['major_update']) ? $args['major_update'] : false );
 
         // 	Check site availability.
         if (! $this->sites->nameIsTaken($name)) {
@@ -265,7 +267,7 @@ class MwuCommand extends SiteCommand
 
                 $this->respond('update_plugins_start');
 
-                $update_plugins = $this->update_plugins($site_env, $exclude);
+                $update_plugins = $this->update_plugins($site_env, $exclude, $major_update);
 
                 $report['data']['update_plugins'] = $update_plugins;
 
@@ -285,17 +287,20 @@ class MwuCommand extends SiteCommand
             }
         }
 
+        //  Get major update info
+        $report['data']['major_update'] = $this->get_major_update($site_env);
+
         // 	Get excluded plugin info
-        if ( $exclude ) {
-        	$excluded_plugins = array();
+        if ($exclude) {
+            $excluded_plugins = array();
 
-			foreach ($exclude as $plugin_name) {
-				$plugin_info = $this->get_plugin_info($site_env, $plugin_name);
+            foreach ($exclude as $plugin_name) {
+                $plugin_info = $this->get_plugin_info($site_env, $plugin_name);
 
-				if ( $plugin_info ) {
-		        	$excluded_plugins[] = $plugin_info;
-				}
-        	}        	
+                if ($plugin_info) {
+                    $excluded_plugins[] = $plugin_info;
+                }
+            }
 
             $report['data']['excluded_plugins'] = $excluded_plugins;
         }
@@ -438,7 +443,7 @@ class MwuCommand extends SiteCommand
      *
      * @since 1.0.0
      */
-    public function get_screenshot_url($name,$env)
+    public function get_screenshot_url($name, $env)
     {
 
         $env = $this->get_site_environment("$name.$env");
@@ -547,7 +552,20 @@ class MwuCommand extends SiteCommand
      *
      * @since 1.0.0
      */
-    public function update_plugins($site_env, $exclude = false)
+    public function get_major_update($site_env)
+    {
+
+        $mwu_cli = new \MWU_WPCommand($this->get_site_environment($site_env));
+
+        return $mwu_cli->get_major_update();
+    }
+
+    /**
+     * Update all plugins in a site.
+     *
+     * @since 1.0.0
+     */
+    public function update_plugins($site_env, $exclude = false, $major_update = false)
     {
 
         $mwu_cli = new \MWU_WPCommand($this->get_site_environment($site_env));
@@ -555,7 +573,7 @@ class MwuCommand extends SiteCommand
         $retry_times = 5;
 
         do {
-            $update_response = $mwu_cli->update_plugins($exclude);
+            $update_response = $mwu_cli->update_plugins($exclude, $major_update);
 
             $retry_times--;
         } while ($mwu_cli->is_timed_out_error($update_response) && $retry_times > 0);
@@ -784,7 +802,7 @@ class MwuCommand extends SiteCommand
                                 break;
                             case 'update_plugins':
                                 if ($value) {
-                                    $new_data .= "=> Plugins update:\n";
+                                    $new_data .= "=> Minor plugin updates:\n";
                                     foreach ($value as $key => $updated) {
                                         $new_data .= '   [ ' . $this->format_version($updated->old_version) . ' ] -> [ ' . $this->format_version($updated->new_version) . ' ]    ' . $updated->name;
                                         if ('Error' === $updated->status) {
@@ -793,18 +811,29 @@ class MwuCommand extends SiteCommand
                                         $new_data .= "\n";
                                     }
                                 } else {
-                                    $new_data .= "=> No available plugin updates.\n";
+                                    $new_data .= "=> No minor plugin updates available.\n";
                                 }
                                 break;
                             case 'update_list':
                                 if ($value) {
-                                    $new_data .= "=> Available plugin updates:\n";
+                                    $new_data .= "=> Available minor plugin updates:\n";
                                     foreach ($value as $key => $plugin) {
                                         $new_data .= '   [ ' . $this->format_version($plugin->version) . ' ] -> [ ' . $this->format_version($plugin->update_version) . ' ]    ' . $plugin->name . ' | Package: ' . ( $plugin->update_package ? 'available' : 'not available' );
                                         $new_data .= "\n";
                                     }
                                 } else {
-                                    $new_data .= "=> No available plugin updates.\n";
+                                    $new_data .= "=> No minor plugin updates available.\n";
+                                }
+                                break;
+                            case 'major_update':
+                                if ($value) {
+                                    $new_data .= "=> Skipped major plugin updates: To apply them, run MWU with parameter --major_update\n";
+                                    foreach ($value as $key => $plugin) {
+                                        $new_data .= '   [ ' . $this->format_version($plugin->version) . ' ] -> [ ' . $this->format_version($plugin->update_version) . ' ]    ' . $plugin->name;
+                                        $new_data .= "\n";
+                                    }
+                                } else {
+                                    $new_data .= "=> No major plugin updates available.\n";
                                 }
                                 break;
                             case 'excluded_plugins':
@@ -820,13 +849,13 @@ class MwuCommand extends SiteCommand
                                 break;
                             case 'upstream':
                                 if ($value && is_array($value)) {
-	                                $new_data .= "=> Updated site upstream.\n";
+                                    $new_data .= "=> Updated site upstream.\n";
                                     foreach ($value as $log) {
                                         $new_data .= '   [ ' . $log->author . ' ] ' . $log->message;
                                         $new_data .= "\n";
                                     }
                                 } else {
-	                                $new_data .= "=> Upstream update is not available.\n";
+                                    $new_data .= "=> Upstream update is not available.\n";
                                 }
                                 break;
                             case 'deploy_to_test':
@@ -928,7 +957,7 @@ class MwuCommand extends SiteCommand
                     'footer'        => 'Update time: ',
                     'footer_icon'   => 'https://platform.slack-edge.com/img/default_application_icon.png',
                     'ts'            => $date->getTimestamp(),
-                    'image_url'     => $this->get_screenshot_url($name,'dev'),
+                    'image_url'     => $this->get_screenshot_url($name, 'dev'),
                 ),
             ),
         );

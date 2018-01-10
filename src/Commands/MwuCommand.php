@@ -288,7 +288,13 @@ class MwuCommand extends SiteCommand
         }
 
         //  Get major update info
-        $report['data']['major_update'] = $this->get_major_update($site_env);
+        if (! $major_update) {
+            $report['data']['major_update'] = $this->get_major_update($site_env);
+
+            if ($report['data']['major_update']) {
+                $report['data']['update_list'] = $this->trim_major_update($report['data']['update_list'], $report['data']['major_update']);
+            }
+        }
 
         // 	Get excluded plugin info
         if ($exclude) {
@@ -915,42 +921,26 @@ class MwuCommand extends SiteCommand
         $payload = array(
             'username'      => $this->slack_settings['username'],
             'icon_emoji'    => ':' . $this->slack_settings['icon_emoji'] . ':',
-            // 'text'          => "*$title*\n" . $this->get_screenshot_url($name,'dev'),
             'text'          => "*$title*\n",
             'mrkdwn'        => true,
             'attachments'   => array(
                 array(
                     'color'         => $color2,
-                    // 'author_name'	=> 'pantheon site - ' . $name,
                     'fields'        => array(
                             array(
                                 'title'     => 'Dashboard',
                                 'value'     => '<' . $this->get_dashboard_url("$name.dev") . '|dashboard.pantheonsite.io>',
                                 'short'     => true
                             ),
-                            // array(
-                            //     'title'     => 'Dev',
-                            //     'value'     => ( isset($env_urls['dev']) ? $env_urls['dev'] : 'undefined' ),
-                            //     'short'     => true
-                            // ),
-                            // array(
-                            //     'title'     => 'Test',
-                            //     'value'     => ( isset($env_urls['test']) ? $env_urls['test'] : 'undefined' ),
-                            //     'short'     => true
-                            // ),
                             array(
                                 'title'     => 'Live',
                                 'value'     => ( isset($env_urls['live']) ? $env_urls['live'] : 'undefined' ),
                                 'short'     => true
                             ),
                     ),
-                    // 'footer'        => 'Update time: ',
-                    // 'footer_icon'   => 'https://platform.slack-edge.com/img/default_application_icon.png',
-                    // 'ts'            => $date->getTimestamp()
                 ),
                 array(
                     'color'         => $color1,
-                    // 'author_name'   => 'terminus mwu - ' . $name,
                     'title'         => 'Updates Log',
                     'text'          => $message,
                     'mrkdwn_in'     => array( 'text' ),
@@ -1024,6 +1014,35 @@ class MwuCommand extends SiteCommand
         }
 
         return $trimmed;
+    }
+
+    /**
+     * Compare available plugin to update against major updates.
+     *
+     * @since 1.0.0
+     */
+    function trim_major_update($list, $major)
+    {
+
+        $new_list = array();
+        $update_list = array();
+        $major_list = array();
+
+        if ($major) {
+            foreach ($major as $plugin) {
+                $major_list[] = $plugin->name;
+            }
+        }
+
+        if ($list) {
+            foreach ($list as $plugin) {
+                if (! in_array($plugin->name, $major_list)) {
+                    $update_list[] = $plugin;
+                }
+            }
+        }
+
+        return $update_list;
     }
 
     /**

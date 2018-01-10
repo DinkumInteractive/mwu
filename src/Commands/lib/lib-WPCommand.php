@@ -87,12 +87,12 @@ class MWU_WPCommand
 
         $plugins = $this->get_plugin_list();
 
-        if ( $plugins ) {
-	        foreach ($plugins as $plugin) {
-	            if ('available' === $plugin->update) {
-	                $update_list[] = $plugin;
-	            }
-	        }
+        if ($plugins) {
+            foreach ($plugins as $plugin) {
+                if ('available' === $plugin->update) {
+                    $update_list[] = $plugin;
+                }
+            }
         }
 
         return $update_list;

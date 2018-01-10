@@ -802,7 +802,7 @@ class MwuCommand extends SiteCommand
                                 break;
                             case 'update_plugins':
                                 if ($value) {
-                                    $new_data .= "=> Minor plugin updates:\n";
+                                    $new_data .= "=> Minor plugin updates applied:\n";
                                     foreach ($value as $key => $updated) {
                                         $new_data .= '   [ ' . $this->format_version($updated->old_version) . ' ] -> [ ' . $this->format_version($updated->new_version) . ' ]    ' . $updated->name;
                                         if ('Error' === $updated->status) {

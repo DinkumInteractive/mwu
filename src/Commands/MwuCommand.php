@@ -176,7 +176,7 @@ class MwuCommand extends SiteCommand
         $name = $args['name'];
         $env = $args['env'];
         $upstream = $args['upstream'];
-        $update = $args['update'];
+        $update = filter_var($args['update'], FILTER_VALIDATE_BOOLEAN);
         $exclude = ( isset($args['exclude']) ? $args['exclude'] : false );
         $auto_commit = $args['auto_commit'];
         $backup = $args['backup'];

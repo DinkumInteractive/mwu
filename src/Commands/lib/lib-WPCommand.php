@@ -109,11 +109,11 @@ class MWU_WPCommand
     public function update_plugins($exclude = false, $major = false)
     {
 
-        $exclude = ( $exclude ? implode(',', $exclude) : '' );
+        $exclude = ( $exclude ? '--exclude=' . implode(',', $exclude) : '' );
 
         $major = ( $major ? '' : '--minor' );
 
-        $command = "wp plugin update --all --format=json --exclude=$exclude $major";
+        $command = "wp plugin update --all --format=json $exclude $major";
 
         $result = $this->run($command, true);
 

@@ -55,19 +55,19 @@ class MWU_WPCommand
         if ($plugins) {
             foreach ($plugins as $plugin) {
                 if ($plugin_name) {
-                    if ('available' === $plugin->update &&
-                        $plugin->update_package &&
-                        'none' != $plugin->update_package &&
-                        'active' === $plugin->status &&
-                        $plugin_name === $plugin->name
+                    if ('available' === $plugin->update 
+                        && $plugin->update_package 
+                        && 'none' != $plugin->update_package 
+                        // && 'active' === $plugin->status 
+                        && $plugin_name === $plugin->name
                     ) {
                         return true;
                     }
                 } else {
-                    if ('available' === $plugin->update &&
-                        $plugin->update_package &&
-                        'none' != $plugin->update_package &&
-                        'active' === $plugin->status
+                    if ('available' === $plugin->update 
+                        && $plugin->update_package 
+                        && 'none' != $plugin->update_package
+                        // && 'active' === $plugin->status
                     ) {
                         $has_update = true;
 
@@ -135,6 +135,7 @@ class MWU_WPCommand
             // 	Check for error in update;
             foreach ($update_response as $index => $update) {
                 if ('Error' === $update->status && $this->has_update($update->name)) {
+
                     return true;
                 }
             }

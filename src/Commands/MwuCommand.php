@@ -213,9 +213,9 @@ class MwuCommand extends SiteCommand
                 return false;
             }
         }
-
-        /*	@TODO: Site backup. Wait for stable Terminus function.
-		 */
+        
+        /* @TODO: Site backup. Wait for stable Terminus function.
+         */
         if ($backup) {
             $this->respond('backup_start');
 
@@ -260,6 +260,7 @@ class MwuCommand extends SiteCommand
 
         //	Update site plugins
         if (! $this->is_error($site_env)) {
+
             if ($this->has_update($site_env) && $update) {
                 if ('git' == $this->get_connection_info($site_env)) {
                     $this->set_connection($site_env, 'sftp');
@@ -313,6 +314,7 @@ class MwuCommand extends SiteCommand
 
         //	Commit site changes
         if (! $this->is_error($site_env) && $auto_commit) {
+            sleep(6);
             // 	Check for diff
             $diff = get_object_vars($this->get_diff("$name.dev"));
 
@@ -332,8 +334,6 @@ class MwuCommand extends SiteCommand
                     if ($deploy && ! $this->is_error("$name.test")) {
                         $this->respond('deployed_to_test');
 
-                        /*	@TODO: There might be other alternatives to report.
-						 */
                         $report['data']['deploy_to_test'] = 'Deployed to test environment.';
 
                         $this->respond('deploy_to_live');
@@ -343,12 +343,8 @@ class MwuCommand extends SiteCommand
                         if ($deploy && ! $this->is_error("$name.live")) {
                             $this->respond('deployed_to_live');
 
-                            /*	@TODO: There might be other alternatives to report.
-							 */
                             $report['data']['deploy_to_live'] = 'Deployed to live environment.';
                         } else {
-                            /*	@TODO: There might be other alternatives to report.
-							 */
                             $report['data']['deploy_to_live'] = 'Deploy to live environment failed.';
 
                             $this->respond('deploy_to_live_failed');
@@ -356,8 +352,6 @@ class MwuCommand extends SiteCommand
                     } else {
                         $this->respond('deploy_to_test_failed');
 
-                        /*	@TODO: There might be other alternatives to report.
-						 */
                         $report['data']['deploy_to_test'] = 'Deploy to test canceled.';
                     }
                 }
@@ -370,11 +364,6 @@ class MwuCommand extends SiteCommand
 
         // 	Change connection to git
         $this->set_connection($site_env, 'git');
-
-        /*	@TODO: checking
-		var_dump($report);
-		exit;
-		 */
 
         return $report;
     }

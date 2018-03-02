@@ -314,8 +314,10 @@ class MwuCommand extends SiteCommand
 
         //	Commit site changes
         if (! $this->is_error($site_env) && $auto_commit) {
+
+            //  Check for diff and commit
             sleep(6);
-            // 	Check for diff
+
             $diff = get_object_vars($this->get_diff("$name.dev"));
 
             if (count($diff) > 0) {
@@ -325,41 +327,46 @@ class MwuCommand extends SiteCommand
 
                 $this->respond('commit_changes_finished');
 
-                // 	Deploy site
-                if ($auto_deploy) {
-                    $this->respond('deploy_to_test');
+                /*  This is where auto deploy used to be.
+                 */
 
-                    $deploy = $this->deploy("$name.test", "Deploy to test - $auto_commit");
-
-                    if ($deploy && ! $this->is_error("$name.test")) {
-                        $this->respond('deployed_to_test');
-
-                        $report['data']['deploy_to_test'] = 'Deployed to test environment.';
-
-                        $this->respond('deploy_to_live');
-
-                        $deploy = $this->deploy("$name.live", "Deploy to live - $auto_commit");
-
-                        if ($deploy && ! $this->is_error("$name.live")) {
-                            $this->respond('deployed_to_live');
-
-                            $report['data']['deploy_to_live'] = 'Deployed to live environment.';
-                        } else {
-                            $report['data']['deploy_to_live'] = 'Deploy to live environment failed.';
-
-                            $this->respond('deploy_to_live_failed');
-                        }
-                    } else {
-                        $this->respond('deploy_to_test_failed');
-
-                        $report['data']['deploy_to_test'] = 'Deploy to test canceled.';
-                    }
-                }
             } else {
                 $this->respond('commit_changes_none');
 
                 $report['data']['deploy_to_test'] = 'No changes detected. Nothing to deploy.';
             }
+
+            //  Deploy site
+            if ($auto_deploy) {
+                $this->respond('deploy_to_test');
+
+                $deploy = $this->deploy("$name.test", "Deploy to test - $auto_commit");
+
+                if ($deploy && ! $this->is_error("$name.test")) {
+                    $this->respond('deployed_to_test');
+
+                    $report['data']['deploy_to_test'] = 'Deployed to test environment.';
+
+                    $this->respond('deploy_to_live');
+
+                    $deploy = $this->deploy("$name.live", "Deploy to live - $auto_commit");
+
+                    if ($deploy && ! $this->is_error("$name.live")) {
+                        $this->respond('deployed_to_live');
+
+                        $report['data']['deploy_to_live'] = 'Deployed to live environment.';
+                    } else {
+                        $report['data']['deploy_to_live'] = 'Deploy to live environment failed.';
+
+                        $this->respond('deploy_to_live_failed');
+                    }
+                } else {
+                    $this->respond('deploy_to_test_failed');
+
+                    $report['data']['deploy_to_test'] = 'Deploy to test canceled.';
+                }
+            }
+                
         }
 
         // 	Change connection to git

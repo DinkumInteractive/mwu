@@ -806,7 +806,8 @@ class MwuCommand extends SiteCommand
                                 if ($value) {
                                     $new_data .= "=> Minor plugin updates applied:\n";
                                     foreach ($value as $key => $updated) {
-                                        $new_data .= '   [ ' . $this->format_version($updated->old_version) . ' ] -> [ ' . $this->format_version($updated->new_version) . ' ]    ' . $updated->name;
+                                        $new_data .= '   ' . $updated->name . "\n";
+                                        $new_data .= '   [ ' . $updated->old_version . '   ->   ' . $updated->new_version . ' ]';
                                         if ('Error' === $updated->status) {
                                             $new_data .=  '    ERROR';
                                         }
@@ -820,9 +821,10 @@ class MwuCommand extends SiteCommand
                                 if ($value) {
                                     $new_data .= "=> Available minor plugin updates:\n";
                                     foreach ($value as $key => $plugin) {
-                                        $new_data .= '   [ ' . $this->format_version($plugin->version) . ' ] -> [ ' . $this->format_version($plugin->update_version) . ' ]    ' . $plugin->name . ' | Package: ' . ( $plugin->update_package ? 'available' : 'not available' );
-                                        $new_data .= "\n";
+                                        $new_data .= '   ' . $plugin->name . '  |  Package: ' . ( $plugin->update_package ? 'available' : 'not available' ) . "\n";
+                                        $new_data .= '   [ ' . $plugin->version . '   ->   ' . $plugin->update_version . ' ] ' . "\n";
                                     }
+                                    $new_data .= "\n";
                                 } else {
                                     $new_data .= "=> No minor plugin updates available.\n";
                                 }
@@ -831,8 +833,8 @@ class MwuCommand extends SiteCommand
                                 if ($value) {
                                     $new_data .= "=> Skipped major plugin updates: To apply them, run MWU with parameter --major_update\n";
                                     foreach ($value as $key => $plugin) {
-                                        $new_data .= '   [ ' . $this->format_version($plugin->version) . ' ] -> [ ' . $this->format_version($plugin->update_version) . ' ]    ' . $plugin->name;
-                                        $new_data .= "\n";
+                                        $new_data .= '   ' . $plugin->name . '  |  Package: ' . ( $plugin->update_package ? 'available' : 'not available' ) . "\n";
+                                        $new_data .= '   [ ' . $plugin->version . '   ->   ' . $plugin->update_version . ' ] ' . "\n";
                                     }
                                 } else {
                                     $new_data .= "=> No major plugin updates available.\n";
@@ -842,7 +844,7 @@ class MwuCommand extends SiteCommand
                                 if ($value) {
                                     $new_data .= "=> Excluded plugin updates:\n";
                                     foreach ($value as $key => $plugin) {
-                                        $new_data .= '   [ ' . $this->format_version($plugin->version) . ' ]    ' . $plugin->name;
+                                        $new_data .= '   [ ' . $plugin->version . ' ]    ' . $plugin->name;
                                         $new_data .= "\n";
                                     }
                                 } else {
